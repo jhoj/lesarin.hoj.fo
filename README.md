@@ -47,6 +47,33 @@ System packages (for the scanned-PDF OCR path): `tesseract-ocr`,
 > Tip: to run `scripts/setup.sh` automatically at the start of every Claude Code
 > web session, add a `SessionStart` hook to `.claude/settings.json`.
 
+### Windows
+
+There's no `apt`, so set it up with pip and (only for scanned PDFs) two manual
+downloads. Digital PDFs and the test suite work with just pip.
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+For the OCR fallback (scanned/image PDFs only):
+
+1. **Tesseract** — installer from the UB Mannheim build; tick the **Danish**
+   language pack during setup.
+2. **Poppler** — download `poppler-windows`, unzip (e.g. to `C:\poppler`).
+
+The installer doesn't add these to PATH, so point the app at them with env vars
+(no PATH editing needed):
+
+```powershell
+$env:TESSERACT_CMD = "C:\Program Files\Tesseract-OCR\tesseract.exe"
+$env:POPPLER_PATH  = "C:\poppler\Library\bin"
+```
+
+If `Activate.ps1` is blocked once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 ## Run
 
 ```bash
@@ -59,6 +86,26 @@ uvicorn app.main:app --reload
 ```bash
 curl -F file=@invoice.pdf http://localhost:8000/extract
 ```
+
+There is no UI — it's a JSON API. Open `http://localhost:8000/docs` for an
+interactive page to upload a single PDF, or use the batch client below.
+
+### Test a whole folder of PDFs
+
+With the service running, point the batch client at a folder. It writes a
+`<name>.lesarin.json` next to each PDF and prints which fields it located:
+
+```powershell
+python scripts\extract_folder.py C:\path\to\invoices
+```
+
+```
+  ok 2026-0014.pdf: invoiceno, sentdate, paydate, vendor.name; 3 line(s)
+  ok scan_old.pdf: invoiceno, vendor.name; 5 line(s) [OCR]
+```
+
+Options: `--url` (default `http://127.0.0.1:8000`), `--out <dir>` to collect the
+JSON files in one place instead of beside the PDFs.
 
 ### Response shape
 

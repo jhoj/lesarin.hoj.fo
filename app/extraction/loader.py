@@ -13,6 +13,7 @@ page: ``(x0, top, x1, bottom)``.
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -186,19 +187,37 @@ def _ocr_words(
     except ImportError:
         return []
 
-    images = convert_from_bytes(
-        pdf_bytes, dpi=_OCR_DPI, first_page=page_number, last_page=page_number
-    )
+    _configure_tesseract(pytesseract)
+
+    # On Windows the poppler binaries usually aren't on PATH; POPPLER_PATH lets
+    # the user point at the unzipped ...\Library\bin folder without touching PATH.
+    poppler_path = os.environ.get("POPPLER_PATH") or None
+    try:
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=_OCR_DPI,
+            first_page=page_number,
+            last_page=page_number,
+            poppler_path=poppler_path,
+        )
+    except Exception:
+        # poppler missing/misconfigured — degrade to no OCR rather than 500.
+        return []
     if not images:
         return []
     image = images[0]
+
+    lang = ocr_language()
 
     # Pixel -> PDF point scale. Derive from the actual render size so it stays
     # correct even if poppler rounds dimensions.
     sx = page_width / image.width if image.width else 72.0 / _OCR_DPI
     sy = page_height / image.height if image.height else 72.0 / _OCR_DPI
 
-    data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    ocr_kwargs = {"output_type": pytesseract.Output.DICT}
+    if lang:
+        ocr_kwargs["lang"] = lang
+    data = pytesseract.image_to_data(image, **ocr_kwargs)
     words: List[Word] = []
     for i, text in enumerate(data["text"]):
         text = (text or "").strip()
@@ -229,11 +248,23 @@ def _ocr_words(
     return words
 
 
+def _configure_tesseract(pytesseract) -> None:
+    """Point pytesseract at the Tesseract binary via TESSERACT_CMD.
+
+    On Windows the installer doesn't add tesseract.exe to PATH by default, so we
+    let the user set TESSERACT_CMD instead of editing PATH. No-op when unset.
+    """
+    cmd = os.environ.get("TESSERACT_CMD")
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+
+
 def ocr_language() -> Optional[str]:
     """Best-effort: prefer Danish OCR data (closest to Faroese) if installed."""
     try:
         import pytesseract
 
+        _configure_tesseract(pytesseract)
         langs = pytesseract.get_languages(config="")
         if "dan" in langs:
             return "dan"
