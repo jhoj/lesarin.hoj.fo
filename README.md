@@ -125,6 +125,38 @@ JSON files in one place instead of beside the PDFs.
 Dates are normalised to ISO `YYYY-MM-DD`; `raw` keeps the original text. A field
 with `value: null` and `bbox: null` means it wasn't located.
 
+## Vendor templates + web UI
+
+The heuristic reader above guesses across any layout. To make it *just work* for a
+given supplier, teach it once: in the **web UI** you name the vendor (identified by its
+V-tal / ID), define the output fields you want (e.g. `VendorNumber`), and map each one to
+where it sits on that vendor's invoice — by source label (`"Veitara nr."`) or by dragging
+a box on the page. The mapping is saved as a **vendor template** in SQLite. Afterwards the
+reader auto-detects the vendor by its V-tal and applies the template; reopen the UI only
+when a layout changes.
+
+- Persistence: `data/lesarin.db` (SQLite) — an output-format setup table, vendors, and
+  per-vendor field mappings. Created automatically on first run.
+- API: under `/api` — `documents` (upload / file / read), `vendors` + `output-fields`
+  CRUD, and a template-aware `POST /api/extract` for headless production extraction.
+- UI: an Angular 22 app in [`frontend/`](frontend/README.md).
+
+### Run the UI
+
+```bash
+# 1. backend (also serves a built UI at / if frontend/dist exists)
+uvicorn app.main:app --reload
+
+# 2. frontend dev server (separate terminal)
+cd frontend && npm install && npm start   # http://localhost:4200
+```
+
+For a single-origin production run, `cd frontend && npm run build` then just
+`uvicorn app.main:app` and open `http://localhost:8000/`.
+
+> Prefer a keyboard-only TUI? That's the planned alternative layout (Textual), sharing the
+> same backend and templates — see the roadmap.
+
 ## Tests
 
 ```bash
@@ -132,12 +164,14 @@ pytest
 ```
 
 The tests build a small Faroese invoice in memory (`reportlab`) and assert that
-fields, dates, vendor, and line items are extracted with positions, plus the
-HTTP endpoints.
+fields, dates, vendor, and line items are extracted with positions, the template
+engine (label/region strategies), vendor/output CRUD + V-tal detection, and the
+HTTP endpoints (21 tests).
 
 ## Roadmap
 
+- Keyboard-only **TUI** (Textual) as an alternative layout to the web app, sharing the
+  same backend and templates.
 - Optional local LLM mode (Ollama) as a fallback for layouts the heuristics miss,
   staying fully local and free.
 - Amount/total fields and currency detection.
-- A review UI that renders the PDF and highlights each located value.

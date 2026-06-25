@@ -1,0 +1,181 @@
+<header class="topbar">
+  <div class="brand">Lesarin <span>· vendor template editor</span></div>
+
+  <label class="dropzone" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+    <input type="file" accept="application/pdf" hidden (change)="onFileInput($event)" />
+    <span>Drop an invoice PDF here, or click to choose</span>
+  </label>
+
+  <div class="status" [class.busy]="busy()">{{ status() }}</div>
+</header>
+
+<main class="layout">
+  <!-- LEFT: vendors + expected-output setup -->
+  <aside class="col left">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Vendors</h2>
+        <button type="button" class="ghost" (click)="newVendor()">+ New</button>
+      </div>
+      <ul class="vendor-list">
+        @for (v of vendors(); track v.id) {
+          <li
+            [class.selected]="v.id === selectedVendorId()"
+            [class.detected]="v.id === detectedVendorId()"
+            (click)="selectVendor(v.id)"
+          >
+            <span class="v-name">{{ v.name }}</span>
+            <span class="v-id">{{ v.identifier }}</span>
+          </li>
+        } @empty {
+          <li class="muted">No vendors yet.</li>
+        }
+      </ul>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Expected output</h2></div>
+      <ul class="output-list">
+        @for (f of outputFields(); track f.key) {
+          <li>
+            <span class="of-key">{{ f.key }}</span>
+            <span class="of-type">{{ f.value_type }}</span>
+            <button type="button" class="x" (click)="deleteOutputField(f.key)">×</button>
+          </li>
+        } @empty {
+          <li class="muted">Add the fields you want out, e.g. VendorNumber.</li>
+        }
+      </ul>
+      <div class="add-output">
+        <input
+          type="text"
+          placeholder="New field key (e.g. VendorNumber)"
+          [ngModel]="newOutputKey()"
+          (ngModelChange)="newOutputKey.set($event)"
+        />
+        <select [ngModel]="newOutputType()" (ngModelChange)="newOutputType.set($event)">
+          <option value="string">string</option>
+          <option value="date">date</option>
+          <option value="number">number</option>
+        </select>
+        <button type="button" (click)="addOutputField()">Add</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- CENTER: the PDF with overlaid boxes -->
+  <section class="col center">
+    <app-pdf-viewer
+      [pdfUrl]="fileUrl()"
+      [boxes]="boxes()"
+      [selectedId]="selectedOutput()"
+      (boxMove)="onBoxMove($event)"
+      (boxSelect)="onBoxSelect($event)"
+    />
+  </section>
+
+  <!-- RIGHT: the vendor template (mappings) -->
+  <aside class="col right">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Template</h2>
+        <div class="actions">
+          <button type="button" (click)="autoRead()" [disabled]="!docInfo() || busy()">Auto-read</button>
+          <button type="button" class="primary" (click)="save()" [disabled]="busy()">Save</button>
+        </div>
+      </div>
+
+      <div class="vendor-head">
+        <input
+          type="text"
+          placeholder="Vendor name (e.g. Effo)"
+          [ngModel]="vendorName()"
+          (ngModelChange)="vendorName.set($event)"
+        />
+        <input
+          type="text"
+          placeholder="V-tal / ID (e.g. 314188)"
+          [ngModel]="vendorIdentifier()"
+          (ngModelChange)="vendorIdentifier.set($event)"
+        />
+        <input
+          type="text"
+          placeholder="Match keywords, comma-separated"
+          [ngModel]="vendorKeywords()"
+          (ngModelChange)="vendorKeywords.set($event)"
+        />
+      </div>
+
+      <div class="mappings">
+        @for (m of mappings(); track $index; let i = $index) {
+          <div class="map-row" [class.selected]="m.output === selectedOutput()" (click)="selectOutput(m.output)">
+            <div class="map-top">
+              <span class="map-output">{{ m.output }}</span>
+              @let rf = readByOutput().get(m.output);
+              <span class="map-value" [class.found]="rf?.value">{{ rf?.value ?? '—' }}</span>
+              @if (rf?.value) {
+                <span class="badge" [class.lo]="(rf?.confidence ?? 0) < 0.5">{{ ((rf?.confidence ?? 0) * 100) | number: '1.0-0' }}%</span>
+              }
+              <button type="button" class="x" (click)="removeMapping(i); $event.stopPropagation()">×</button>
+            </div>
+            <div class="map-controls">
+              <select [ngModel]="m.strategy" (ngModelChange)="updateMapping(i, { strategy: $event })">
+                <option value="label">by label</option>
+                <option value="region">by box</option>
+              </select>
+              @if (m.strategy === 'label') {
+                <input
+                  type="text"
+                  class="label-in"
+                  placeholder="source label, e.g. Veitara nr."
+                  [ngModel]="m.label"
+                  (ngModelChange)="updateMapping(i, { label: $event })"
+                />
+                <select [ngModel]="m.relation" (ngModelChange)="updateMapping(i, { relation: $event })">
+                  <option value="right">value right</option>
+                  <option value="below">value below</option>
+                </select>
+              } @else {
+                <span class="region-hint">drag the box on the page →</span>
+              }
+              <select [ngModel]="m.value_type" (ngModelChange)="updateMapping(i, { value_type: $event })">
+                <option value="string">string</option>
+                <option value="date">date</option>
+                <option value="number">number</option>
+              </select>
+            </div>
+          </div>
+        } @empty {
+          <p class="muted">No fields mapped. Add output fields, then map them here.</p>
+        }
+      </div>
+
+      @if (unmappedOutputs().length) {
+        <div class="add-map">
+          <select #addsel>
+            @for (f of unmappedOutputs(); track f.key) {
+              <option [value]="f.key">{{ f.key }}</option>
+            }
+          </select>
+          <button type="button" (click)="addMappingFor(addsel.value)">+ Map field</button>
+        </div>
+      }
+    </section>
+
+    @if (suggestions().length) {
+      <section class="panel">
+        <div class="panel-head"><h2>Suggestions</h2></div>
+        <p class="muted small">Select a field row, then apply a suggestion to it.</p>
+        <ul class="sugg-list">
+          @for (s of suggestions(); track $index) {
+            <li>
+              <span class="s-kind">{{ s.kind }}</span>
+              <span class="s-val">{{ s.field.value }}</span>
+              <button type="button" (click)="applySuggestion(s)">→ apply</button>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+  </aside>
+</main>
