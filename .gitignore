@@ -26,3 +26,11 @@ htmlcov/
 # Local uploads / scratch
 uploads/
 *.local
+
+# SQLite database (created at runtime)
+data/*.db
+
+# Frontend build / deps
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
