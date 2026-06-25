@@ -1,0 +1,34 @@
+@if (pdfUrl()) {
+  <div class="pdf-toolbar">
+    <button type="button" (click)="prev()" [disabled]="page() <= 1">‹ Prev</button>
+    <span class="pageno">Page {{ page() }} / {{ totalPages() }}</span>
+    <button type="button" (click)="next()" [disabled]="page() >= totalPages()">Next ›</button>
+    <span class="hint">drag a box to move it · drag the corner to resize</span>
+  </div>
+
+  <div class="pdf-stage">
+    <canvas #canvas></canvas>
+    <div class="overlay">
+      @for (b of pageBoxes(); track b.id) {
+        <div
+          class="box"
+          [class.value]="b.kind === 'value'"
+          [class.suggestion]="b.kind === 'suggestion'"
+          [class.selected]="b.selected"
+          [style.left.px]="b.left"
+          [style.top.px]="b.topPx"
+          [style.width.px]="b.width"
+          [style.height.px]="b.height"
+          (pointerdown)="onBoxDown($event, b, 'move')"
+        >
+          <span class="box-label">{{ b.label }}</span>
+          <span class="box-handle" (pointerdown)="onBoxDown($event, b, 'resize')"></span>
+        </div>
+      }
+    </div>
+  </div>
+} @else {
+  <div class="pdf-empty">
+    <p>Upload an invoice PDF to begin.</p>
+  </div>
+}

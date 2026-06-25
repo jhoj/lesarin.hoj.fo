@@ -1,0 +1,117 @@
+# Multilingual label dictionary for heuristic invoice field extraction.
+# Languages: Faroese (fo), Danish (da), English (en).
+# Matching is case-insensitive and ignores surrounding punctuation such as
+# ":" and "#". Add synonyms here without touching code.
+#
+# Each scalar field declares:
+#   type      : how the value is validated/normalised (date | token | text)
+#   labels    : phrases that announce the value
+#   direction : where the value sits relative to the label (right | below | any)
+
+fields:
+  invoiceno:
+    type: token
+    direction: right
+    labels:
+      - "fakturanr"
+      - "faktura nr"
+      - "fakturanummer"
+      - "faktura nummer"
+      - "rokningarnr"
+      - "rokning nr"
+      - "rokningarnummer"
+      - "invoice no"
+      - "invoice number"
+      - "invoice #"
+      - "inv no"
+      - "bilagsnr"
+
+  sentdate:
+    type: date
+    direction: right
+    labels:
+      - "fakturadato"
+      - "faktura dato"
+      - "dagfesting"
+      - "útskrivað"
+      - "skrivað"
+      - "dato"
+      - "date"
+      - "invoice date"
+      - "issue date"
+
+  paydate:
+    type: date
+    direction: right
+    labels:
+      - "gjalddagi"
+      - "gjaldsdagur"
+      - "gjaldsdato"
+      - "betalingsdato"
+      - "betalingsfrist"
+      - "forfaldsdato"
+      - "forfald"
+      - "due date"
+      - "payment due"
+      - "pay by"
+
+# Vendor (supplier) name detection. The supplier is usually the sender block
+# near the top of page 1. These labels are used when present; otherwise the
+# heuristic falls back to the topmost text block on page 1.
+vendor:
+  labels:
+    - "seljari"
+    - "sølumaður"
+    - "útvegari"
+    - "leverandør"
+    - "from"
+    - "frá"
+    - "supplier"
+    - "vendor"
+  # If any of these appear in a candidate block, it is the buyer, not the
+  # vendor — skip it.
+  buyer_keywords:
+    - "keypari"
+    - "móttakari"
+    - "kunde"
+    - "køber"
+    - "bill to"
+    - "ship to"
+    - "sold to"
+
+# Line-item table column header keywords, mapped to canonical column names.
+lines:
+  columns:
+    description:
+      - "lýsing"
+      - "vørulýsing"
+      - "tekstur"
+      - "tekst"
+      - "beskrivelse"
+      - "description"
+      - "item"
+      - "vøra"
+    quantity:
+      - "nøgd"
+      - "tal"
+      - "antal"
+      - "antall"
+      - "qty"
+      - "quantity"
+    unit_price:
+      - "prísur"
+      - "eindarprísur"
+      - "stk pris"
+      - "stykpris"
+      - "enhedspris"
+      - "unit price"
+      - "price"
+    amount:
+      - "upphædd"
+      - "tilsamans"
+      - "samlað"
+      - "beløb"
+      - "beloeb"
+      - "amount"
+      - "total"
+      - "line total"
