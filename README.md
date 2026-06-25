@@ -154,8 +154,17 @@ cd frontend && npm install && npm start   # http://localhost:4200
 For a single-origin production run, `cd frontend && npm run build` then just
 `uvicorn app.main:app` and open `http://localhost:8000/`.
 
-> Prefer a keyboard-only TUI? That's the planned alternative layout (Textual), sharing the
-> same backend and templates — see the roadmap.
+### Keyboard-only TUI (alternative layout)
+
+Prefer no mouse? A Textual TUI shares the same SQLite store and templates as the web app —
+teach a vendor in one, it works in the other. A terminal can't show the PDF image, so the
+centre pane is a text reconstruction of the page (faithful for digital PDFs):
+
+```bash
+python -m app.tui invoice.pdf
+```
+
+Keys: `e` edit the selected field's source label · `r` read · `s` save vendor · `q` quit.
 
 ## Tests
 
@@ -170,8 +179,7 @@ HTTP endpoints (21 tests).
 
 ## Roadmap
 
-- Keyboard-only **TUI** (Textual) as an alternative layout to the web app, sharing the
-  same backend and templates.
 - Optional local LLM mode (Ollama) as a fallback for layouts the heuristics miss,
   staying fully local and free.
 - Amount/total fields and currency detection.
+- Richer line-item mapping per vendor (column templates).
