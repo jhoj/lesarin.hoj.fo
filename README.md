@@ -166,6 +166,73 @@ python -m app.tui invoice.pdf
 
 Keys: `e` edit the selected field's source label · `r` read · `s` save vendor · `q` quit.
 
+## SaaS: log in, upload, get your data
+
+The same engine runs as a multi-tenant service. A customer **logs in, uploads an
+invoice, and gets the data back in the shape they want** — a custom JSON object
+keyed to their API, generic XML, UBL 2.1, or Danish OIOUBL.
+
+The thing that makes it feel effortless: **mappings are stored centrally**. The
+first time *anyone* uploads a given supplier's invoice, the system learns where
+that supplier prints each value and saves a **shared vendor template**. Every
+later upload of that supplier — by *any* customer — is an instant hit. Customers
+never see or manage templates; they only choose which fields they want out and
+what to call them. And because the heuristics already locate most fields
+label-free, a brand-new supplier usually produces useful output the very first
+time too.
+
+### How the layers fit
+
+* **Canonical vocabulary** (shared) — a fixed set of semantic invoice fields
+  (`InvoiceNo`, `InvoiceDate`, `DueDate`, `VendorName`, `VendorNo`, `Currency`,
+  `TotalExclVat`, `Vat`, `TotalInclVat`, `AccountNo`). The contract both sides
+  agree on. See [`app/canonical.py`](app/canonical.py).
+* **Vendor templates** (shared centrally) — map a supplier's layout onto the
+  canonical fields. Taught once (often auto-learned on first upload), reused by
+  everyone. Stored in the same SQLite store as before.
+* **Output profiles** (per customer) — pick canonical fields, rename them to
+  your own keys, choose a format. This is the *only* thing a customer configures.
+
+### SaaS API (under `/api`)
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/auth/register` · `POST /api/auth/login` | email + password → bearer token |
+| `GET /api/me` | the current account |
+| `GET /api/canonical-fields` | the fields you can put in a profile |
+| `GET/POST/PUT/DELETE /api/me/profiles[...]` | manage output profiles |
+| `POST /api/me/export?profile_id=&fmt=` | upload a PDF → data in your format |
+
+Auth is dependency-free: passwords are PBKDF2-hashed and tokens are HMAC-signed
+with the standard library (no native crypto build, no session table). Set
+`LESARIN_SECRET` in production to pin the token-signing key; otherwise a random
+secret is generated and persisted beside the database.
+
+```bash
+# 1. register and keep the token
+TOKEN=$(curl -s -X POST localhost:8000/api/auth/register \
+  -H 'content-type: application/json' \
+  -d '{"email":"me@firm.fo","password":"hunter2hunter2"}' | python -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+# 2. upload an invoice → get JSON keyed to your default profile
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -F file=@invoice.pdf 'localhost:8000/api/me/export'
+
+# 3. same invoice as OIOUBL instead
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -F file=@invoice.pdf 'localhost:8000/api/me/export?fmt=oioubl'
+```
+
+### SaaS web app
+
+A dependency-free UI (plain HTML/JS, no build step) is served by the backend at
+**`/app`** — register/log in, build output profiles by ticking fields and
+renaming them, then drag in a PDF and download the result.
+
+```bash
+uvicorn app.main:app           # then open http://localhost:8000/app/
+```
+
 ## Tests
 
 ```bash
@@ -174,8 +241,9 @@ pytest
 
 The tests build a small Faroese invoice in memory (`reportlab`) and assert that
 fields, dates, vendor, and line items are extracted with positions, the template
-engine (label/region strategies), vendor/output CRUD + V-tal detection, and the
-HTTP endpoints (21 tests).
+engine (label/region strategies), vendor/output CRUD + V-tal detection, the HTTP
+endpoints, plus the SaaS layer — auth tokens, output profiles, the four
+exporters, and the central "map once, everyone benefits" auto-learning.
 
 ## Roadmap
 

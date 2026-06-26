@@ -27,8 +27,9 @@ htmlcov/
 uploads/
 *.local
 
-# SQLite database (created at runtime)
+# SQLite database + signing secret (created at runtime)
 data/*.db
+data/.lesarin-secret
 
 # Frontend build / deps
 frontend/node_modules/

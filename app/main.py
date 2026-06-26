@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import router as api_router
+from .saas import router as saas_router
 from .db import init_db
 from .extraction import fields as field_extractor
 from .extraction import lines as line_extractor
@@ -52,8 +53,10 @@ _MAX_BYTES = 10 * 1024 * 1024
 # Load the label dictionary once at startup.
 _CONFIG = field_extractor.load_config()
 
-# Mount the /api surface used by the vendor-template UIs.
+# Mount the /api surface: vendor-template studio (api_router) + the SaaS
+# customer surface — accounts, output profiles, one-shot export (saas_router).
 app.include_router(api_router)
+app.include_router(saas_router)
 
 
 @app.get("/health")
@@ -84,9 +87,15 @@ async def extract(file: UploadFile = File(...)) -> InvoiceResult:
     return result
 
 
+# The SaaS customer app — a dependency-free vanilla-JS UI (login, profiles,
+# upload & export). Served same-origin so it needs no CORS or npm build.
+_SAAS_WEB = Path(__file__).resolve().parent.parent / "web"
+if _SAAS_WEB.is_dir():
+    app.mount("/app", StaticFiles(directory=str(_SAAS_WEB), html=True), name="saas")
+
 # Serve the built Angular app (after `ng build`) at the root, if present. Kept
-# last so it never shadows /health, /extract, or /api. In dev you instead run
-# `ng serve` on :4200 and hit the API cross-origin (CORS is enabled above).
+# last so it never shadows /health, /extract, /api, or /app. In dev you instead
+# run `ng serve` on :4200 and hit the API cross-origin (CORS is enabled above).
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "lesarin" / "browser"
 if _FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
