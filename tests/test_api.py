@@ -25,11 +25,13 @@ def client():
 
 
 def test_output_fields_crud(client):
+    # The canonical vocabulary is seeded on startup, so assert by membership
+    # rather than exact contents.
     assert client.post("/api/output-fields", json={"key": "VendorNumber"}).status_code == 200
-    fields = client.get("/api/output-fields").json()
-    assert [f["key"] for f in fields] == ["VendorNumber"]
+    keys = {f["key"] for f in client.get("/api/output-fields").json()}
+    assert "VendorNumber" in keys
     assert client.delete("/api/output-fields/VendorNumber").status_code == 200
-    assert client.get("/api/output-fields").json() == []
+    assert "VendorNumber" not in {f["key"] for f in client.get("/api/output-fields").json()}
 
 
 def test_full_teach_and_read_flow(client, sample_invoice_pdf):
@@ -88,8 +90,8 @@ def test_unknown_document_read_404(client):
 
 def test_output_field_aliases_roundtrip(client):
     client.post("/api/output-fields", json={"key": "Vtal", "aliases": ["Vtal", "V-Tal"]})
-    fields = client.get("/api/output-fields").json()
-    assert fields[0]["aliases"] == ["Vtal", "V-Tal"]
+    fields = {f["key"]: f for f in client.get("/api/output-fields").json()}
+    assert fields["Vtal"]["aliases"] == ["Vtal", "V-Tal"]
 
 
 def test_read_auto_matches_via_field_aliases(client, sample_invoice_pdf):

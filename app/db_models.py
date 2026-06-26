@@ -43,6 +43,60 @@ class OutputField(Base):
     aliases: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
 
+class User(Base):
+    """A SaaS account. Owns output profiles; never owns vendor templates —
+    those are shared centrally so one customer's mapping helps the next."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    profiles: Mapped[List["OutputProfile"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", order_by="OutputProfile.id"
+    )
+
+
+class OutputProfile(Base):
+    """A customer's desired output shape: a named set of renamed canonical
+    fields plus the export format (json | xml | ubl | oioubl)."""
+
+    __tablename__ = "output_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(128), default="Default")
+    fmt: Mapped[str] = mapped_column(String(16), default="json")  # json|xml|ubl|oioubl
+    is_default: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+
+    user: Mapped["User"] = relationship(back_populates="profiles")
+    fields: Mapped[List["ProfileField"]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        order_by="ProfileField.sort_order, ProfileField.id",
+    )
+
+
+class ProfileField(Base):
+    """One row of a profile: a canonical field, renamed to the customer's key."""
+
+    __tablename__ = "profile_fields"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("output_profiles.id", ondelete="CASCADE"), index=True
+    )
+    canonical: Mapped[str] = mapped_column(String(64))  # e.g. "InvoiceNo"
+    output_name: Mapped[str] = mapped_column(String(128))  # customer's label, e.g. "invoice_id"
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    profile: Mapped["OutputProfile"] = relationship(back_populates="fields")
+
+
 class Vendor(Base):
     """A known supplier and how to recognise it in an uploaded PDF."""
 
@@ -53,6 +107,9 @@ class Vendor(Base):
     identifier_kind: Mapped[str] = mapped_column(String(16), default="vtal")
     name: Mapped[str] = mapped_column(String(256))  # e.g. "Effo"
     match_keywords: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    # Provenance: which account first taught this template. Nullable — the store
+    # is shared, so this is for audit only, never for access control.
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
