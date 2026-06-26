@@ -45,6 +45,7 @@ export class App implements OnInit {
   readonly readFields = signal<ReadField[]>([]);
   readonly suggestions = signal<Suggestion[]>([]);
   readonly lines = signal<LineItem[]>([]);
+  readonly currency = signal<string | null>(null);
   readonly selectedOutput = signal<string | null>(null);
 
   // Editable vendor header.
@@ -213,6 +214,7 @@ export class App implements OnInit {
       this.readFields.set(res.fields);
       this.suggestions.set(res.suggestions);
       this.lines.set(res.lines);
+      this.currency.set(res.meta.currency ?? null);
       this.status.set(`Found ${res.meta.fields_found} / ${res.meta.fields_total} mapped fields.`);
     } catch (err) {
       this.status.set(`Read failed: ${String(err)}`);

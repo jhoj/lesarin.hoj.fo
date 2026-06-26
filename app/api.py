@@ -135,6 +135,7 @@ def read_document(
             ocr_used=document.ocr_used,
             fields_found=found,
             fields_total=len(located),
+            currency=field_extractor.detect_currency(document),
         ),
     )
 

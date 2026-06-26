@@ -148,6 +148,12 @@ lines:
       - "antall"
       - "qty"
       - "quantity"
+    unit:
+      - "eind"
+      - "unit"
+      - "uom"
+      - "mál"
+      - "eining"
     unit_price:
       - "prísur"
       - "eindarprísur"

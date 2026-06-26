@@ -56,6 +56,36 @@ def test_multipage_totals_and_footer_excluded(multipage_invoice_pdf, cfg):
     assert "549517" not in amounts  # page footer (V-tal), not a line item
 
 
+def _word(text, x0, x1, top):
+    from app.extraction.loader import Word
+
+    return Word(text=text, x0=x0, top=top, x1=x1, bottom=top + 10, page=1)
+
+
+def test_unit_column_is_captured(cfg):
+    from app.extraction.loader import Document, PageContent
+
+    words = [
+        _word("Vøra", 40, 70, 100), _word("Nøgd", 200, 240, 100),
+        _word("Eind", 300, 340, 100), _word("Upphædd", 420, 470, 100),
+        _word("Item", 40, 80, 120), _word("2", 205, 215, 120),
+        _word("stk", 300, 320, 120), _word("90,00", 420, 460, 120),
+    ]
+    items = lines.extract_line_items(Document(pages=[PageContent(1, 600.0, 800.0, words, [])]), cfg)
+    assert len(items) == 1
+    assert items[0].unit.value == "stk"
+    assert items[0].quantity.value == "2"
+    assert items[0].amount.value == "90,00"
+
+
+def test_detect_currency_from_caption():
+    from app.extraction.fields import detect_currency
+    from app.extraction.loader import Document, PageContent
+
+    doc = Document(pages=[PageContent(1, 600.0, 800.0, [_word("(DKK)", 10, 40, 10)], [])])
+    assert detect_currency(doc) == "DKK"
+
+
 def test_gridded_sample_still_yields_three(sample_invoice_pdf, cfg):
     items = _items(sample_invoice_pdf, cfg)
     assert len(items) == 3

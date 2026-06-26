@@ -455,6 +455,16 @@ button.x {
   border-color: var(--accent);
 }
 
+/* Big dropzone shown in the center while no document is loaded. */
+.center-drop {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  max-width: none;
+  font-size: 1rem;
+  padding: 2rem;
+}
+
 /* ---- line items ---- */
 .lines-table {
   width: 100%;

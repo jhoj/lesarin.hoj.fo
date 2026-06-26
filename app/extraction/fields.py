@@ -210,6 +210,29 @@ def _extract_scalar(
     return Field.empty()
 
 
+_CURRENCY_CODES = {"dkk", "isk", "eur", "usd", "nok", "sek", "gbp"}
+_CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP"}
+
+
+def detect_currency(document: Document) -> Optional[str]:
+    """Best-effort document currency from an ISO code, a symbol, or a "kr" token.
+
+    Often printed as a column caption like "(DKK)" or beside the totals. In a
+    Faroese/Danish context a bare "kr" means DKK.
+    """
+    for page in document.pages:
+        for w in page.words:
+            token = _norm(w.text)  # strips punctuation like the "(DKK)" parens
+            if token in _CURRENCY_CODES:
+                return token.upper()
+            if token == "kr":
+                return "DKK"
+            for symbol, code in _CURRENCY_SYMBOLS.items():
+                if symbol in w.text:
+                    return code
+    return None
+
+
 def _extract_vendor(document: Document, cfg: dict) -> Vendor:
     vendor_cfg = cfg.get("vendor", {})
     buyer_keywords = [_norm(k) for k in vendor_cfg.get("buyer_keywords", [])]

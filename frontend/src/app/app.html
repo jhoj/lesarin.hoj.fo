@@ -63,18 +63,25 @@
     </section>
   </aside>
 
-  <!-- CENTER: the PDF with overlaid boxes -->
+  <!-- CENTER: the PDF with overlaid boxes (or a big dropzone before upload) -->
   <section class="col center">
-    <app-pdf-viewer
-      [pdfUrl]="fileUrl()"
-      [boxes]="boxes()"
-      [selectedId]="selectedOutput()"
-      [drawArmed]="activeFieldNeedsBox()"
-      [activeLabel]="activeField()"
-      (boxMove)="onBoxMove($event)"
-      (boxSelect)="onBoxSelect($event)"
-      (boxDraw)="onBoxDraw($event)"
-    />
+    @if (hasDoc()) {
+      <app-pdf-viewer
+        [pdfUrl]="fileUrl()"
+        [boxes]="boxes()"
+        [selectedId]="selectedOutput()"
+        [drawArmed]="activeFieldNeedsBox()"
+        [activeLabel]="activeField()"
+        (boxMove)="onBoxMove($event)"
+        (boxSelect)="onBoxSelect($event)"
+        (boxDraw)="onBoxDraw($event)"
+      />
+    } @else {
+      <label class="dropzone center-drop highlight" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+        <input type="file" accept="application/pdf" hidden (change)="onFileInput($event)" />
+        <span>Drop an invoice PDF here, or click to choose</span>
+      </label>
+    }
   </section>
 
   <!-- RIGHT: the vendor template (mappings) -->
@@ -194,14 +201,21 @@
         </div>
         <table class="lines-table">
           <thead>
-            <tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr>
+            <tr>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Unit</th>
+              <th>Price</th>
+              <th>Amount{{ currency() ? ' (' + currency() + ')' : '' }}</th>
+            </tr>
           </thead>
           <tbody>
             @for (li of lines(); track $index) {
               <tr>
                 <td class="ld">{{ li.description.value || '—' }}</td>
                 <td>{{ li.quantity.value || '' }}</td>
-                <td>{{ li.unit_price.value || '' }}</td>
+                <td>{{ li.unit.value || '' }}</td>
+                <td class="la">{{ li.unit_price.value || '' }}</td>
                 <td class="la">{{ li.amount.value || '' }}</td>
               </tr>
             }

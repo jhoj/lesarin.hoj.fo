@@ -37,6 +37,7 @@ class Vendor(BaseModel):
 class LineItem(BaseModel):
     description: Field = PydField(default_factory=Field.empty)
     quantity: Field = PydField(default_factory=Field.empty)
+    unit: Field = PydField(default_factory=Field.empty)  # unit of measure (e.g. STK, Pakke)
     unit_price: Field = PydField(default_factory=Field.empty)
     amount: Field = PydField(default_factory=Field.empty)
 
@@ -47,6 +48,7 @@ class Meta(BaseModel):
     ocr_used: bool = False
     fields_found: int = 0
     fields_total: int = 0
+    currency: Optional[str] = None  # e.g. "DKK", best-effort document currency
 
 
 class InvoiceResult(BaseModel):

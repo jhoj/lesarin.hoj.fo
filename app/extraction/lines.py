@@ -21,7 +21,7 @@ from .fields import Line, group_lines, _bbox_of, _norm
 from .loader import Document, Word
 from ..models import Field, LineItem
 
-_CANON = ("description", "quantity", "unit_price", "amount")
+_CANON = ("description", "quantity", "unit", "unit_price", "amount")
 _DEFAULT_TERMINATORS = ("i alt", "tilsamans", "samanlagt", "subtotal", "total", "moms", "mvg")
 
 
@@ -72,6 +72,7 @@ class _Item:
     page: int = 1
     desc_words: List[Word] = dc_field(default_factory=list)
     qty: Optional[Word] = None
+    unit: Optional[Word] = None
     unit_price: Optional[Word] = None
     amount: Optional[Word] = None
 
@@ -89,6 +90,7 @@ class _Item:
         return LineItem(
             description=self._desc_field(),
             quantity=self._one(self.qty, self.page),
+            unit=self._one(self.unit, self.page),
             unit_price=self._one(self.unit_price, self.page),
             amount=self._one(self.amount, self.page),
         )
@@ -151,6 +153,7 @@ def extract_line_items(document: Document, config: dict) -> List[LineItem]:
             if amount is not None and _has_digit(amount.text):
                 item = _Item(page=page.page_number, amount=amount)
                 item.qty = _pick(buckets, canon, centers, "quantity")
+                item.unit = _pick(buckets, canon, centers, "unit")
                 item.unit_price = _pick(buckets, canon, centers, "unit_price")
                 item.desc_words = [w for idx, ws in buckets.items() if canon[idx] == "description" for w in ws]
                 anchors.append(item)

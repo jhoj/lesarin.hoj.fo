@@ -82,6 +82,7 @@ export interface Suggestion {
 export interface LineItem {
   description: FieldVal;
   quantity: FieldVal;
+  unit: FieldVal;
   unit_price: FieldVal;
   amount: FieldVal;
 }
@@ -90,7 +91,13 @@ export interface ReadResult {
   fields: ReadField[];
   suggestions: Suggestion[];
   lines: LineItem[];
-  meta: { pages: number; ocr_used: boolean; fields_found: number; fields_total: number };
+  meta: {
+    pages: number;
+    ocr_used: boolean;
+    fields_found: number;
+    fields_total: number;
+    currency?: string | null;
+  };
 }
 
 export interface VendorPayload {
