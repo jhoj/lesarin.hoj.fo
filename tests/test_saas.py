@@ -173,8 +173,3 @@ def test_second_user_benefits_from_first_users_mapping(client):
     assert r.status_code == 200
     assert json.loads(r.text)["InvoiceNo"] == "2026-0014"
     assert len(client.get("/api/vendors").json()) == 1  # still just the one
-
-
-def test_saas_ui_is_served(client):
-    r = client.get("/app/")
-    assert r.status_code == 200 and "Lesarin" in r.text

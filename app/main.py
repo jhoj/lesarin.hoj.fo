@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from . import __version__
 from .api import router as api_router
@@ -87,15 +87,21 @@ async def extract(file: UploadFile = File(...)) -> InvoiceResult:
     return result
 
 
-# The SaaS customer app — a dependency-free vanilla-JS UI (login, profiles,
-# upload & export). Served same-origin so it needs no CORS or npm build.
-_SAAS_WEB = Path(__file__).resolve().parent.parent / "web"
-if _SAAS_WEB.is_dir():
-    app.mount("/app", StaticFiles(directory=str(_SAAS_WEB), html=True), name="saas")
-
-# Serve the built Angular app (after `ng build`) at the root, if present. Kept
-# last so it never shadows /health, /extract, /api, or /app. In dev you instead
-# run `ng serve` on :4200 and hit the API cross-origin (CORS is enabled above).
+# Serve the built Angular app (after `ng build`) at the root, if present. It now
+# contains both the customer SaaS surface (login, profiles, export) and the
+# vendor-template studio as routed views. Defined last so the API/docs routes
+# above always win; this catch-all only handles the SPA. In dev you instead run
+# `ng serve` on :4200 and hit the API cross-origin (CORS is enabled above).
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "lesarin" / "browser"
 if _FRONTEND_DIST.is_dir():
-    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+    _INDEX = _FRONTEND_DIST / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa(full_path: str) -> FileResponse:
+        # A real built asset (hashed JS/CSS, favicon) is served as-is; every other
+        # path falls back to index.html so client-side routes like /app and
+        # /studio survive a hard refresh or a deep link.
+        candidate = (_FRONTEND_DIST / full_path).resolve()
+        if full_path and candidate.is_file() and _FRONTEND_DIST in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(_INDEX)

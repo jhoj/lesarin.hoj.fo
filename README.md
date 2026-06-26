@@ -225,12 +225,18 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ### SaaS web app
 
-A dependency-free UI (plain HTML/JS, no build step) is served by the backend at
-**`/app`** — register/log in, build output profiles by ticking fields and
-renaming them, then drag in a PDF and download the result.
+The Angular app in [`frontend/`](frontend/README.md) is the single UI for both
+audiences, as routed views behind a login:
+
+- **`/app`** (customer) — register/log in, build output profiles by ticking
+  fields and renaming them, then drag in a PDF and download the result.
+- **`/studio`** (mapping) — the vendor-template editor (PDF viewer + drag-box
+  wizard) for teaching the central mappings.
 
 ```bash
-uvicorn app.main:app           # then open http://localhost:8000/app/
+cd frontend && npm install && npm start   # dev: http://localhost:4200
+# or, single-origin production:
+cd frontend && npm run build && cd .. && uvicorn app.main:app   # http://localhost:8000/
 ```
 
 ## Tests

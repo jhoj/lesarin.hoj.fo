@@ -1,0 +1,132 @@
+<div class="customer">
+  <!-- Export -->
+  <section class="panel">
+    <div class="panel-head"><h2>Export an invoice</h2></div>
+    <p class="muted small">
+      Map once, centrally — most invoices just work the first time. Pick the output you want
+      and drop in a PDF.
+    </p>
+
+    <div class="controls">
+      <label>
+        Profile
+        <select [ngModel]="exportProfileId()" (ngModelChange)="exportProfileId.set($event)">
+          @for (p of profiles(); track p.id) {
+            <option [ngValue]="p.id">{{ p.name }} ({{ p.fmt }})</option>
+          }
+        </select>
+      </label>
+      <label>
+        Format override
+        <select [ngModel]="exportFormat()" (ngModelChange)="exportFormat.set($event)">
+          <option value="">Use profile's format</option>
+          @for (f of formats; track f) {
+            <option [value]="f">{{ f.toUpperCase() }}</option>
+          }
+        </select>
+      </label>
+    </div>
+
+    <label class="dropzone" [class.has-file]="file()" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+      <input type="file" accept="application/pdf" hidden (change)="onFileInput($event)" />
+      <span>{{ file() ? 'Ready: ' + file()!.name : 'Drop a PDF here, or click to choose' }}</span>
+    </label>
+
+    <div class="row">
+      <button class="primary" [disabled]="!file() || busy()" (click)="runExport()">Export</button>
+      <button class="ghost" [disabled]="!output()" (click)="download()">Download</button>
+      <span class="muted small">{{ status() }}</span>
+    </div>
+
+    @if (output()) {
+      <pre class="output">{{ output() }}</pre>
+    }
+  </section>
+
+  <!-- Profiles -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Output profiles</h2>
+      <div class="actions"><button class="ghost" (click)="newProfile()">New profile</button></div>
+    </div>
+
+    @if (profiles().length === 0) {
+      <p class="muted small">No profiles yet — create one to choose your output.</p>
+    }
+    <ul class="profile-list">
+      @for (p of profiles(); track p.id) {
+        <li>
+          <span class="name">{{ p.name }}</span>
+          <span class="badge fmt">{{ p.fmt }}</span>
+          @if (p.is_default) {
+            <span class="badge">default</span>
+          }
+          <button class="ghost edit" (click)="editProfile(p)">Edit</button>
+        </li>
+      }
+    </ul>
+
+    @if (editing()) {
+      <form class="editor" (ngSubmit)="saveProfile()">
+        <h3>{{ editing() === 'new' ? 'New profile' : 'Edit profile' }}</h3>
+        <div class="controls">
+          <label>
+            Name
+            <input [ngModel]="editName()" (ngModelChange)="editName.set($event)" name="pname" required />
+          </label>
+          <label>
+            Format
+            <select [ngModel]="editFormat()" (ngModelChange)="editFormat.set($event)" name="pfmt">
+              @for (f of formats; track f) {
+                <option [value]="f">{{ f.toUpperCase() }}</option>
+              }
+            </select>
+          </label>
+          <label class="check">
+            <input
+              type="checkbox"
+              [ngModel]="editDefault()"
+              (ngModelChange)="editDefault.set($event)"
+              name="pdef"
+            />
+            Default profile
+          </label>
+        </div>
+        <p class="muted small">Tick the fields you want out, and rename them to match your API.</p>
+        <table class="fields">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Field</th>
+              <th>Your output name</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of editRows(); track row.canonical) {
+              <tr>
+                <td>
+                  <input type="checkbox" [(ngModel)]="row.on" [name]="'on-' + row.canonical" />
+                </td>
+                <td class="canon">
+                  <span>{{ row.canonical }}</span>
+                  <small>{{ row.display_name }}</small>
+                </td>
+                <td>
+                  <input [(ngModel)]="row.output_name" [name]="'name-' + row.canonical" />
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        <div class="row">
+          <button class="primary" type="submit" [disabled]="busy()">Save profile</button>
+          <button class="ghost" type="button" (click)="cancelEdit()">Cancel</button>
+          @if (editing() !== 'new') {
+            <button class="danger" type="button" (click)="deleteProfile()">Delete</button>
+          }
+          <span class="err small">{{ editError() }}</span>
+        </div>
+      </form>
+    }
+  </section>
+</div>

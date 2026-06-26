@@ -107,3 +107,43 @@ export interface VendorPayload {
   match_keywords: string[];
   mappings: Mapping[];
 }
+
+// ---- SaaS: accounts + output profiles -------------------------------------
+
+export type ExportFormat = 'json' | 'xml' | 'ubl' | 'oioubl';
+
+export interface TokenResponse {
+  token: string;
+  email: string;
+}
+
+export interface Me {
+  id: number;
+  email: string;
+}
+
+export interface CanonicalField {
+  key: string;
+  display_name: string;
+  value_type: ValueType;
+}
+
+export interface ProfileField {
+  canonical: string;
+  output_name: string;
+}
+
+export interface OutputProfile {
+  id: number;
+  name: string;
+  fmt: ExportFormat;
+  is_default: boolean;
+  fields: ProfileField[];
+}
+
+export interface ProfilePayload {
+  name: string;
+  fmt: ExportFormat;
+  is_default: boolean;
+  fields: ProfileField[];
+}
