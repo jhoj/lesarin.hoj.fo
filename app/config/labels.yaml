@@ -86,7 +86,7 @@ suggest:
   - suggested_key: "VendorNo"
     category: "vendor"
     value_type: "number"
-    labels: ["v-tal", "vtal", "vat no", "cvr", "reg no"]
+    labels: ["vtal", "vat no", "cvr", "reg no"]
   - suggested_key: "InvoiceNo"
     category: "invoice"
     value_type: "string"

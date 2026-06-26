@@ -101,9 +101,13 @@ def _match_label_on_line(line: Line, labels: List[str]) -> Optional[Tuple[int, i
     Longer labels are tried first so "faktura nr" wins over "faktura".
     """
     norm_words = [_norm(w.text) for w in line.words]
+    # Separator-free form so a label like "vtal" matches "V-tal" (which _norm
+    # turns into the two-token string "v tal").
+    squished = [w.replace(" ", "") for w in norm_words]
     for label in sorted(labels, key=len, reverse=True):
         nlabel = _norm(label)
         ltokens = nlabel.split()
+        lsquish = nlabel.replace(" ", "")
         n = len(ltokens)
         for start in range(0, len(norm_words) - n + 1):
             window = norm_words[start : start + n]
@@ -113,6 +117,9 @@ def _match_label_on_line(line: Line, labels: List[str]) -> Optional[Tuple[int, i
             if n == 1 and norm_words[start].startswith(ltokens[0]) and len(norm_words[start]) > len(
                 ltokens[0]
             ):
+                return start, start + 1, label
+            # Handle a separator variant ("vtal" ↔ "V-tal" → "v tal").
+            if squished[start] == lsquish and lsquish:
                 return start, start + 1, label
     return None
 

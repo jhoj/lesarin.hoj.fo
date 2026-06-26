@@ -78,6 +78,14 @@ def test_unit_column_is_captured(cfg):
     assert items[0].amount.value == "90,00"
 
 
+def test_vtal_label_matches_hyphenated_word():
+    from app.extraction.fields import _match_label_on_line, group_lines
+
+    line = group_lines([_word("V-tal", 10, 40, 10), _word("549517", 45, 80, 10)])[0]
+    match = _match_label_on_line(line, ["vtal"])
+    assert match is not None and match[2] == "vtal"
+
+
 def test_detect_currency_from_caption():
     from app.extraction.fields import detect_currency
     from app.extraction.loader import Document, PageContent
