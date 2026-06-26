@@ -37,6 +37,7 @@ class Vendor(BaseModel):
 class LineItem(BaseModel):
     description: Field = PydField(default_factory=Field.empty)
     quantity: Field = PydField(default_factory=Field.empty)
+    unit: Field = PydField(default_factory=Field.empty)  # unit of measure (e.g. STK, Pakke)
     unit_price: Field = PydField(default_factory=Field.empty)
     amount: Field = PydField(default_factory=Field.empty)
 
@@ -47,6 +48,7 @@ class Meta(BaseModel):
     ocr_used: bool = False
     fields_found: int = 0
     fields_total: int = 0
+    currency: Optional[str] = None  # e.g. "DKK", best-effort document currency
 
 
 class InvoiceResult(BaseModel):
@@ -72,6 +74,7 @@ class OutputFieldIn(BaseModel):
     display_name: str = ""
     value_type: ValueType = "string"
     sort_order: int = 0
+    aliases: List[str] = PydField(default_factory=list)  # "read labels" / synonyms
 
 
 class OutputFieldOut(OutputFieldIn):
@@ -125,6 +128,25 @@ class Suggestion(BaseModel):
 
     kind: str  # invoiceno | date | vendor_name
     field: Field
+
+
+class FieldSuggestion(BaseModel):
+    """A proposed output field detected on import (when none are configured yet).
+
+    The customer accepts it as-is or edits the export key / read-labels first.
+    """
+
+    category: str  # vendor | invoice | totals | payment
+    suggested_key: str  # proposed export label, e.g. "VendorNo"
+    read_labels: List[str] = PydField(default_factory=list)  # the label(s) it was found by
+    value: Optional[str] = None
+    page: Optional[int] = None
+    bbox: Optional[List[float]] = None
+    value_type: ValueType = "string"
+
+
+class SuggestFieldsResult(BaseModel):
+    suggestions: List[FieldSuggestion] = PydField(default_factory=list)
 
 
 class PageSize(BaseModel):

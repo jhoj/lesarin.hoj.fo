@@ -37,6 +37,10 @@ class OutputField(Base):
     display_name: Mapped[str] = mapped_column(String(256), default="")
     value_type: Mapped[str] = mapped_column(String(16), default="string")  # string|date|number
     sort_order: Mapped[int] = mapped_column(default=0)
+    # "Read labels" — synonyms the value is announced by on invoices, e.g.
+    # VendorNumber ← ["Vtal", "V-Tal"]. Used to auto-locate the field on a
+    # never-seen vendor. Applies across all vendors (a vendor's own mapping wins).
+    aliases: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
 
 class Vendor(Base):

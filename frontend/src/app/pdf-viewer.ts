@@ -50,9 +50,13 @@ export class PdfViewer {
   readonly pdfUrl = input<string | null>(null);
   readonly boxes = input<ViewBox[]>([]);
   readonly selectedId = input<string | null>(null);
+  // When armed, dragging on empty page area draws a new box for the active field.
+  readonly drawArmed = input<boolean>(false);
+  readonly activeLabel = input<string | null>(null);
 
   readonly boxMove = output<{ id: string; page: number; bbox: number[] }>();
   readonly boxSelect = output<string>();
+  readonly boxDraw = output<{ page: number; bbox: number[] }>();
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly canvas = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
@@ -62,6 +66,9 @@ export class PdfViewer {
   readonly scale = signal(1);
   private readonly docVersion = signal(0);
   private readonly dragging = signal<DragState | null>(null);
+  // Rubber-band draw: anchor + current point in client coords, with the overlay
+  // rect captured at pointerdown so we can map back to overlay-local pixels.
+  private readonly drawing = signal<{ rect: DOMRect; x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   private pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
   private renderTask: pdfjsLib.RenderTask | null = null;
@@ -163,8 +170,33 @@ export class PdfViewer {
     });
   }
 
+  readonly drawPreview = computed(() => {
+    const dr = this.drawing();
+    if (!dr) return null;
+    return {
+      left: Math.min(dr.x0, dr.x1) - dr.rect.left,
+      topPx: Math.min(dr.y0, dr.y1) - dr.rect.top,
+      width: Math.abs(dr.x1 - dr.x0),
+      height: Math.abs(dr.y1 - dr.y0),
+    };
+  });
+
+  // Pointerdown on empty page area (boxes stopPropagation, so this only fires on
+  // bare overlay): begin a rubber-band rectangle when draw mode is armed.
+  onOverlayDown(ev: PointerEvent): void {
+    if (!this.drawArmed()) return;
+    ev.preventDefault();
+    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    this.drawing.set({ rect, x0: ev.clientX, y0: ev.clientY, x1: ev.clientX, y1: ev.clientY });
+  }
+
   @HostListener('window:pointermove', ['$event'])
   onPointerMove(ev: PointerEvent): void {
+    const dr = this.drawing();
+    if (dr) {
+      this.drawing.set({ ...dr, x1: ev.clientX, y1: ev.clientY });
+      return;
+    }
     const d = this.dragging();
     if (!d) return;
     const dx = ev.clientX - d.startX;
@@ -183,6 +215,18 @@ export class PdfViewer {
 
   @HostListener('window:pointerup')
   onPointerUp(): void {
+    const dr = this.drawing();
+    if (dr) {
+      this.drawing.set(null);
+      const s = this.scale() || 1;
+      const left = Math.min(dr.x0, dr.x1) - dr.rect.left;
+      const top = Math.min(dr.y0, dr.y1) - dr.rect.top;
+      const right = Math.max(dr.x0, dr.x1) - dr.rect.left;
+      const bottom = Math.max(dr.y0, dr.y1) - dr.rect.top;
+      if (right - left < 5 || bottom - top < 5) return; // ignore a stray click
+      this.boxDraw.emit({ page: this.page(), bbox: [left / s, top / s, right / s, bottom / s] });
+      return;
+    }
     const d = this.dragging();
     if (!d) return;
     const s = this.scale() || 1;

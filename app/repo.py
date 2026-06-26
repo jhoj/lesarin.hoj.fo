@@ -30,6 +30,7 @@ def upsert_output_field(
     display_name: str = "",
     value_type: str = "string",
     sort_order: int = 0,
+    aliases: Optional[List[str]] = None,
 ) -> OutputField:
     field = session.scalar(select(OutputField).where(OutputField.key == key))
     if field is None:
@@ -38,6 +39,8 @@ def upsert_output_field(
     field.display_name = display_name or field.display_name or key
     field.value_type = value_type
     field.sort_order = sort_order
+    if aliases is not None:
+        field.aliases = aliases
     session.commit()
     session.refresh(field)
     return field

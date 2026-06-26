@@ -1,0 +1,102 @@
+"""Header-anchored line-item parsing (works on borderless invoices)."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.extraction import fields, lines, loader
+
+
+@pytest.fixture()
+def cfg():
+    return fields.load_config()
+
+
+def _items(pdf_bytes, cfg):
+    return lines.extract_line_items(loader.load(pdf_bytes), cfg)
+
+
+def test_borderless_table_is_parsed(borderless_invoice_pdf, cfg):
+    items = _items(borderless_invoice_pdf, cfg)
+    assert len(items) == 2  # two products; totals row excluded
+    assert [it.amount.value for it in items] == ["90,00", "75,00"]
+
+
+def test_wrapped_description_merges_into_item(borderless_invoice_pdf, cfg):
+    items = _items(borderless_invoice_pdf, cfg)
+    # The amount-less "Arabica beans" row folds into the first item's description.
+    assert "Kaffi" in items[0].description.value
+    assert "Arabica" in items[0].description.value
+    assert "Mjólk" in items[1].description.value
+
+
+def test_columns_and_positions(borderless_invoice_pdf, cfg):
+    items = _items(borderless_invoice_pdf, cfg)
+    assert items[0].quantity.value == "2"
+    assert items[0].unit_price.value == "45,00"
+    assert items[0].description.bbox is not None
+    assert items[0].amount.bbox is not None
+
+
+def test_totals_row_is_not_a_line_item(borderless_invoice_pdf, cfg):
+    items = _items(borderless_invoice_pdf, cfg)
+    assert all(it.amount.value != "165,00" for it in items)
+
+
+def test_multipage_continuation_accumulates(multipage_invoice_pdf, cfg):
+    items = _items(multipage_invoice_pdf, cfg)
+    # 2 items on page 1 + 2 on page 2 (whose header is NOT reprinted).
+    assert [it.amount.value for it in items] == ["90,00", "75,00", "30,00", "40,00"]
+
+
+def test_multipage_totals_and_footer_excluded(multipage_invoice_pdf, cfg):
+    items = _items(multipage_invoice_pdf, cfg)
+    amounts = {it.amount.value for it in items}
+    assert "235,00" not in amounts  # totals terminator
+    assert "549517" not in amounts  # page footer (V-tal), not a line item
+
+
+def _word(text, x0, x1, top):
+    from app.extraction.loader import Word
+
+    return Word(text=text, x0=x0, top=top, x1=x1, bottom=top + 10, page=1)
+
+
+def test_unit_column_is_captured(cfg):
+    from app.extraction.loader import Document, PageContent
+
+    words = [
+        _word("Vøra", 40, 70, 100), _word("Nøgd", 200, 240, 100),
+        _word("Eind", 300, 340, 100), _word("Upphædd", 420, 470, 100),
+        _word("Item", 40, 80, 120), _word("2", 205, 215, 120),
+        _word("stk", 300, 320, 120), _word("90,00", 420, 460, 120),
+    ]
+    items = lines.extract_line_items(Document(pages=[PageContent(1, 600.0, 800.0, words, [])]), cfg)
+    assert len(items) == 1
+    assert items[0].unit.value == "stk"
+    assert items[0].quantity.value == "2"
+    assert items[0].amount.value == "90,00"
+
+
+def test_vtal_label_matches_hyphenated_word():
+    from app.extraction.fields import _match_label_on_line, group_lines
+
+    line = group_lines([_word("V-tal", 10, 40, 10), _word("549517", 45, 80, 10)])[0]
+    match = _match_label_on_line(line, ["vtal"])
+    assert match is not None and match[2] == "vtal"
+
+
+def test_detect_currency_from_caption():
+    from app.extraction.fields import detect_currency
+    from app.extraction.loader import Document, PageContent
+
+    doc = Document(pages=[PageContent(1, 600.0, 800.0, [_word("(DKK)", 10, 40, 10)], [])])
+    assert detect_currency(doc) == "DKK"
+
+
+def test_gridded_sample_still_yields_three(sample_invoice_pdf, cfg):
+    items = _items(sample_invoice_pdf, cfg)
+    assert len(items) == 3
+    assert items[0].description.value is not None
+    assert items[0].amount.value is not None
+    assert items[0].description.bbox is not None

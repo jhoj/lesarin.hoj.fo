@@ -73,3 +73,77 @@ def _build_sample_invoice() -> bytes:
 @pytest.fixture(scope="session")
 def sample_invoice_pdf() -> bytes:
     return _build_sample_invoice()
+
+
+def _build_borderless_invoice() -> bytes:
+    """A line-item table drawn as positioned text with NO ruled borders.
+
+    pdfplumber.find_tables() detects nothing here (like many real invoices), so
+    this exercises the header-anchored, word-position line parser. Includes a
+    wrapped description row (no amount) and a totals row that must terminate the
+    line scan.
+    """
+    from reportlab.pdfgen import canvas as _canvas
+
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    def row(top: float, cells, bold: bool = False) -> None:
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10)
+        for x, text in cells:
+            c.drawString(x, height - top, text)
+
+    row(120, [(40, "Vøra"), (90, "Lýsing"), (300, "Nøgd"), (380, "Prísur"), (470, "Upphædd")], bold=True)
+    row(140, [(40, "1001"), (90, "Kaffi 500g"), (300, "2"), (380, "45,00"), (470, "90,00")])
+    row(154, [(90, "Arabica beans")])  # wrapped description, no amount
+    row(175, [(40, "1002"), (90, "Mjólk 1L"), (300, "6"), (380, "12,50"), (470, "75,00")])
+    row(205, [(90, "Í alt"), (470, "165,00")])  # totals → terminator
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@pytest.fixture(scope="session")
+def borderless_invoice_pdf() -> bytes:
+    return _build_borderless_invoice()
+
+
+def _build_multipage_invoice() -> bytes:
+    """Two-page borderless invoice where the line table CONTINUES onto page 2
+    without re-printing the header, and page 2 carries a footer + totals.
+
+    Exercises: header carry-forward across pages, dynamic total row count, the
+    totals terminator, and the page-footer guard (the footer must not become a
+    line item).
+    """
+    from reportlab.pdfgen import canvas as _canvas
+
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    def row(top: float, cells, bold: bool = False) -> None:
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10)
+        for x, text in cells:
+            c.drawString(x, height - top, text)
+
+    # Page 1: header + two items, no totals (table continues).
+    row(120, [(40, "Vøra"), (90, "Lýsing"), (300, "Nøgd"), (380, "Prísur"), (470, "Upphædd")], bold=True)
+    row(140, [(40, "1001"), (90, "Kaffi 500g"), (300, "2"), (380, "45,00"), (470, "90,00")])
+    row(160, [(40, "1002"), (90, "Mjólk 1L"), (300, "6"), (380, "12,50"), (470, "75,00")])
+    c.showPage()
+
+    # Page 2: NO repeated header — must carry forward page 1's columns.
+    row(120, [(40, "1003"), (90, "Te 1L"), (300, "1"), (380, "30,00"), (470, "30,00")])
+    row(140, [(40, "1004"), (90, "Sukur"), (300, "4"), (380, "10,00"), (470, "40,00")])
+    row(170, [(90, "Í alt"), (470, "235,00")])  # totals → terminator
+    row(800, [(40, "Borg P/F"), (200, "Tel +298 477272"), (430, "V-tal"), (470, "549517")])  # footer
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@pytest.fixture(scope="session")
+def multipage_invoice_pdf() -> bytes:
+    return _build_multipage_invoice()

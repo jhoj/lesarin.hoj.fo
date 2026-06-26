@@ -1,95 +1,175 @@
-"""Line-item table detection and column mapping.
+"""Line-item parsing from word positions (header-anchored).
 
-We rely on pdfplumber's positioned tables (from the loader). A table qualifies
-as the line-item table when its header row matches at least two known column
-keywords (e.g. a description column and an amount column). Each cell keeps its
-bounding box, so individual line-item values are locatable too.
+pdfplumber's ruled-table detection (``find_tables``) returns nothing on the many
+invoices that draw no cell borders. Instead we locate the column *header* by its
+keywords, turn the header word x-positions into column **bands**, then read every
+data row beneath it — across pages, for however many rows exist — until a totals
+*terminator*. Rows that carry no amount (wrapped descriptions, sub-codes) fold
+into the nearest item. Each value keeps its bbox so the frontend can point at it.
+
+Line counts vary per invoice and can run for pages, so nothing here is mapped to
+a fixed region: the global column dictionary in ``labels.yaml`` drives detection
+the same way for every vendor.
 """
 
 from __future__ import annotations
 
-import re
+from dataclasses import dataclass, field as dc_field
 from typing import Dict, List, Optional
 
-from .loader import Document, Table, TableCell
+from .fields import Line, group_lines, _bbox_of, _norm
+from .loader import Document, Word
 from ..models import Field, LineItem
 
-_CANON = ("description", "quantity", "unit_price", "amount")
+_CANON = ("description", "quantity", "unit", "unit_price", "amount")
+_DEFAULT_TERMINATORS = ("i alt", "tilsamans", "samanlagt", "subtotal", "total", "moms", "mvg")
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"[^0-9a-zà-ÿ]+", " ", (text or "").lower(), flags=re.IGNORECASE).strip()
+def _has_digit(text: str) -> bool:
+    return any(ch.isdigit() for ch in text)
 
 
-def _header_mapping(header_cells: List[TableCell], columns_cfg: dict) -> Dict[int, str]:
-    """Map column index -> canonical name using header keywords."""
-    mapping: Dict[int, str] = {}
-    for cell in header_cells:
-        norm = _norm(cell.text)
-        if not norm:
-            continue
-        for canon in _CANON:
-            keywords = [_norm(k) for k in columns_cfg.get(canon, [])]
-            if any(kw and (kw in norm or norm in kw) for kw in keywords):
-                mapping.setdefault(cell.col, canon)
-                break
-    return mapping
+def _center(w: Word) -> float:
+    return (w.x0 + w.x1) / 2.0
 
 
-def _cells_by_row(table: Table) -> Dict[int, List[TableCell]]:
-    rows: Dict[int, List[TableCell]] = {}
-    for cell in table.cells:
-        rows.setdefault(cell.row, []).append(cell)
-    return rows
+def _column_canon(text: str, columns_cfg: dict) -> Optional[str]:
+    """Map a header word to a canonical column name via keyword match, or None."""
+    nw = _norm(text)
+    if not nw:
+        return None
+    for canon in _CANON:
+        for kw in columns_cfg.get(canon, []):
+            k = _norm(kw)
+            if k and (k == nw or k in nw or nw in k):
+                return canon
+    return None
 
 
-def _cell_field(cell: Optional[TableCell]) -> Field:
-    if cell is None or not cell.text.strip():
-        return Field.empty()
-    return Field(
-        value=cell.text.strip(),
-        page=cell.page,
-        bbox=list(cell.bbox),
-        confidence=0.8,
-    )
+def _header_columns(line: Line, columns_cfg: dict) -> Optional[List[tuple]]:
+    """Return ``[(x_center, canon|None), ...]`` (x-sorted) if ``line`` is the header.
+
+    Every header word is kept — even unmapped ones like "Eind"/"Avsláttur" — so
+    the column bands line up; we just require at least two *mapped* columns.
+    """
+    cols = [(_center(w), _column_canon(w.text, columns_cfg)) for w in line.words]
+    if sum(1 for _, c in cols if c) < 2:
+        return None
+    cols.sort(key=lambda c: c[0])
+    return cols
+
+
+def _band_index(x: float, centers: List[float]) -> int:
+    """Which column band ``x`` falls in (boundaries at midpoints between centers)."""
+    for i in range(len(centers) - 1):
+        if x < (centers[i] + centers[i + 1]) / 2.0:
+            return i
+    return len(centers) - 1
+
+
+@dataclass
+class _Item:
+    page: int = 1
+    desc_words: List[Word] = dc_field(default_factory=list)
+    qty: Optional[Word] = None
+    unit: Optional[Word] = None
+    unit_price: Optional[Word] = None
+    amount: Optional[Word] = None
+
+    def _desc_field(self) -> Field:
+        if not self.desc_words:
+            return Field.empty()
+        ws = sorted(self.desc_words, key=lambda w: (round(w.top, 1), w.x0))
+        return Field(value=" ".join(w.text for w in ws), page=self.page, bbox=_bbox_of(ws), confidence=0.7)
+
+    @staticmethod
+    def _one(w: Optional[Word], page: int) -> Field:
+        return Field(value=w.text, page=page, bbox=list(w.bbox), confidence=0.7) if w else Field.empty()
+
+    def to_lineitem(self) -> LineItem:
+        return LineItem(
+            description=self._desc_field(),
+            quantity=self._one(self.qty, self.page),
+            unit=self._one(self.unit, self.page),
+            unit_price=self._one(self.unit_price, self.page),
+            amount=self._one(self.amount, self.page),
+        )
+
+
+def _pick(buckets: Dict[int, List[Word]], canon: List[Optional[str]], centers: List[float], target: str) -> Optional[Word]:
+    """Best word in the band(s) for ``target``: prefer numeric, nearest band center."""
+    cand = [(i, w) for i, c in enumerate(canon) if c == target for w in buckets.get(i, [])]
+    numeric = [(i, w) for i, w in cand if _has_digit(w.text)]
+    use = numeric or cand
+    if not use:
+        return None
+    return min(use, key=lambda iw: abs(_center(iw[1]) - centers[iw[0]]))[1]
 
 
 def extract_line_items(document: Document, config: dict) -> List[LineItem]:
     columns_cfg = config.get("lines", {}).get("columns", {})
-    best: List[LineItem] = []
+    term_cfg = config.get("lines", {}).get("terminators")
+    terminators = [_norm(t) for t in term_cfg] if term_cfg else list(_DEFAULT_TERMINATORS)
 
+    out: List[LineItem] = []
+    carried_cols: Optional[List[tuple]] = None
     for page in document.pages:
-        for table in page.tables:
-            rows = _cells_by_row(table)
-            if not rows:
+        plines = group_lines(page.words)
+
+        cols = None
+        start = 0
+        for i, ln in enumerate(plines):
+            found = _header_columns(ln, columns_cfg)
+            if found:
+                cols, start = found, i + 1
+                break
+        if cols is None:
+            # Continuation page: the table runs on without re-printing its
+            # header. Reuse the previous page's columns so its rows aren't lost.
+            if carried_cols is None:
                 continue
-            header = rows.get(0, [])
-            mapping = _header_mapping(header, columns_cfg)
-            if len(mapping) < 2:
+            cols, start = carried_cols, 0
+        else:
+            carried_cols = cols
+        centers = [c[0] for c in cols]
+        canon = [c[1] for c in cols]
+        footer_top = page.height * 0.92  # ignore the page-footer band
+
+        anchors: List[_Item] = []
+        anchor_cys: List[float] = []
+        continuations: List[Line] = []
+
+        for ln in plines[start:]:
+            if ln.top > footer_top:
+                break  # into the page footer
+            ntext = _norm(ln.text)
+            if any(t and t in ntext for t in terminators):
+                break  # reached the totals/summary block
+            buckets: Dict[int, List[Word]] = {}
+            for w in ln.words:
+                buckets.setdefault(_band_index(_center(w), centers), []).append(w)
+
+            amount = _pick(buckets, canon, centers, "amount")
+            if amount is not None and _has_digit(amount.text):
+                item = _Item(page=page.page_number, amount=amount)
+                item.qty = _pick(buckets, canon, centers, "quantity")
+                item.unit = _pick(buckets, canon, centers, "unit")
+                item.unit_price = _pick(buckets, canon, centers, "unit_price")
+                item.desc_words = [w for idx, ws in buckets.items() if canon[idx] == "description" for w in ws]
+                anchors.append(item)
+                anchor_cys.append(ln.cy)
+            elif anchors:
+                # Amount-less row below an item = wrapped description. Rows above
+                # the first item are header captions/units (e.g. "(DKK)") — skip.
+                continuations.append(ln)
+
+        # Fold amount-less rows (wrapped descriptions) into the nearest item.
+        for ln in continuations:
+            if not anchors:
                 continue
+            j = min(range(len(anchors)), key=lambda k: abs(anchor_cys[k] - ln.cy))
+            anchors[j].desc_words.extend(ln.words)
 
-            items: List[LineItem] = []
-            for r_idx in sorted(rows):
-                if r_idx == 0:
-                    continue
-                by_col = {c.col: c for c in rows[r_idx]}
-                picked = {
-                    canon: _cell_field(by_col.get(col_idx))
-                    for col_idx, canon in mapping.items()
-                }
-                item = LineItem(
-                    description=picked.get("description", Field.empty()),
-                    quantity=picked.get("quantity", Field.empty()),
-                    unit_price=picked.get("unit_price", Field.empty()),
-                    amount=picked.get("amount", Field.empty()),
-                )
-                if any(
-                    f.found for f in (item.description, item.quantity, item.unit_price, item.amount)
-                ):
-                    items.append(item)
+        out.extend(item.to_lineitem() for item in anchors)
 
-            # Prefer the table that yields the most line items.
-            if len(items) > len(best):
-                best = items
-
-    return best
+    return out

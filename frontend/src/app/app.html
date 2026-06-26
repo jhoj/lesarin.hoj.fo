@@ -1,7 +1,7 @@
 <header class="topbar">
   <div class="brand">Lesarin <span>· vendor template editor</span></div>
 
-  <label class="dropzone" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+  <label class="dropzone" [class.highlight]="!hasDoc()" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
     <input type="file" accept="application/pdf" hidden (change)="onFileInput($event)" />
     <span>Drop an invoice PDF here, or click to choose</span>
   </label>
@@ -11,7 +11,7 @@
 
 <main class="layout">
   <!-- LEFT: vendors + expected-output setup -->
-  <aside class="col left">
+  <aside class="col left" [class.locked]="!hasDoc()" [attr.aria-disabled]="!hasDoc()">
     <section class="panel">
       <div class="panel-head">
         <h2>Vendors</h2>
@@ -63,24 +63,49 @@
     </section>
   </aside>
 
-  <!-- CENTER: the PDF with overlaid boxes -->
+  <!-- CENTER: the PDF with overlaid boxes (or a big dropzone before upload) -->
   <section class="col center">
-    <app-pdf-viewer
-      [pdfUrl]="fileUrl()"
-      [boxes]="boxes()"
-      [selectedId]="selectedOutput()"
-      (boxMove)="onBoxMove($event)"
-      (boxSelect)="onBoxSelect($event)"
-    />
+    @if (hasDoc()) {
+      <app-pdf-viewer
+        [pdfUrl]="fileUrl()"
+        [boxes]="boxes()"
+        [selectedId]="selectedOutput()"
+        [drawArmed]="activeFieldNeedsBox()"
+        [activeLabel]="activeField()"
+        (boxMove)="onBoxMove($event)"
+        (boxSelect)="onBoxSelect($event)"
+        (boxDraw)="onBoxDraw($event)"
+      />
+    } @else {
+      <label class="dropzone center-drop highlight" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+        <input type="file" accept="application/pdf" hidden (change)="onFileInput($event)" />
+        <span>Drop an invoice PDF here, or click to choose</span>
+      </label>
+    }
   </section>
 
   <!-- RIGHT: the vendor template (mappings) -->
-  <aside class="col right">
+  <aside class="col right" [class.locked]="!hasDoc()" [attr.aria-disabled]="!hasDoc()">
     <section class="panel">
       <div class="panel-head">
         <h2>Template</h2>
         <div class="actions">
-          <button type="button" (click)="autoRead()" [disabled]="!docInfo() || busy()">Auto-read</button>
+          <button
+            type="button"
+            (click)="requestAutoRead()"
+            [disabled]="!docInfo() || busy()"
+            title="Re-detect every field from the document — replaces the current reads"
+          >
+            Auto-read
+          </button>
+          <button
+            type="button"
+            (click)="toggleSummary()"
+            [disabled]="!docInfo()"
+            title="Toggle between the step-by-step wizard and showing every box at once"
+          >
+            {{ summaryMode() ? 'Wizard' : 'Summary' }}
+          </button>
           <button type="button" class="primary" (click)="save()" [disabled]="busy()">Save</button>
         </div>
       </div>
@@ -108,7 +133,13 @@
 
       <div class="mappings">
         @for (m of mappings(); track $index; let i = $index) {
-          <div class="map-row" [class.selected]="m.output === selectedOutput()" (click)="selectOutput(m.output)">
+          <div
+            class="map-row"
+            [class.selected]="m.output === selectedOutput()"
+            [class.active]="m.output === activeField()"
+            (click)="selectField(m.output)"
+            (dblclick)="dropCenteredBox(m.output)"
+          >
             <div class="map-top">
               <span class="map-output">{{ m.output }}</span>
               @let rf = readByOutput().get(m.output);
@@ -162,6 +193,37 @@
       }
     </section>
 
+    @if (lines().length) {
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Line items</h2>
+          <span class="muted small" style="margin-left: auto">{{ lines().length }}</span>
+        </div>
+        <table class="lines-table">
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Unit</th>
+              <th>Price</th>
+              <th>Amount{{ currency() ? ' (' + currency() + ')' : '' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (li of lines(); track $index) {
+              <tr>
+                <td class="ld">{{ li.description.value || '—' }}</td>
+                <td>{{ li.quantity.value || '' }}</td>
+                <td>{{ li.unit.value || '' }}</td>
+                <td class="la">{{ li.unit_price.value || '' }}</td>
+                <td class="la">{{ li.amount.value || '' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </section>
+    }
+
     @if (suggestions().length) {
       <section class="panel">
         <div class="panel-head"><h2>Suggestions</h2></div>
@@ -179,3 +241,60 @@
     }
   </aside>
 </main>
+
+@if (suggestRows().length) {
+  <div class="suggest-overlay">
+    <div class="suggest-panel">
+      <h2>Set up your output fields</h2>
+      <p class="muted small">
+        Detected on the document. Choose what to export as, the labels to read it by, then create them.
+      </p>
+      <table class="suggest-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Export as</th>
+            <th>Read as (labels)</th>
+            <th>Value</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of suggestRows(); track $index; let i = $index) {
+            <tr [class.off]="!r.include">
+              <td>
+                <input
+                  type="checkbox"
+                  [ngModel]="r.include"
+                  (ngModelChange)="updateSuggestRow(i, { include: $event })"
+                />
+              </td>
+              <td>
+                <input
+                  type="text"
+                  [ngModel]="r.exportKey"
+                  (ngModelChange)="updateSuggestRow(i, { exportKey: $event })"
+                />
+              </td>
+              <td>
+                <input
+                  type="text"
+                  [ngModel]="r.readLabels"
+                  (ngModelChange)="updateSuggestRow(i, { readLabels: $event })"
+                />
+              </td>
+              <td class="sv">{{ r.value || '—' }}</td>
+              <td class="muted small">{{ r.valueType }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <div class="suggest-actions">
+        <button type="button" (click)="dismissSuggestions()" [disabled]="busy()">Skip</button>
+        <button type="button" class="primary" (click)="acceptSuggestions()" [disabled]="busy()">
+          Create fields
+        </button>
+      </div>
+    </div>
+  </div>
+}
