@@ -3,12 +3,27 @@
     <button type="button" (click)="prev()" [disabled]="page() <= 1">‹ Prev</button>
     <span class="pageno">Page {{ page() }} / {{ totalPages() }}</span>
     <button type="button" (click)="next()" [disabled]="page() >= totalPages()">Next ›</button>
-    <span class="hint">drag a box to move it · drag the corner to resize</span>
+    <span class="hint">
+      @if (drawArmed()) {
+        ✏️ Draw a box around the value for <strong>{{ activeLabel() || 'this field' }}</strong>
+      } @else {
+        drag a box to move it · drag the corner to resize
+      }
+    </span>
   </div>
 
   <div class="pdf-stage">
     <canvas #canvas></canvas>
-    <div class="overlay">
+    <div class="overlay" [class.armed]="drawArmed()" (pointerdown)="onOverlayDown($event)">
+      @if (drawPreview(); as p) {
+        <div
+          class="box draw-preview"
+          [style.left.px]="p.left"
+          [style.top.px]="p.topPx"
+          [style.width.px]="p.width"
+          [style.height.px]="p.height"
+        ></div>
+      }
       @for (b of pageBoxes(); track b.id) {
         <div
           class="box"

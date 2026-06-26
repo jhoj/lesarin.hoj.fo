@@ -9,6 +9,17 @@ export interface OutputField {
   display_name: string;
   value_type: ValueType;
   sort_order: number;
+  aliases: string[]; // "read labels" / synonyms
+}
+
+export interface FieldSuggestion {
+  category: string;
+  suggested_key: string;
+  read_labels: string[];
+  value: string | null;
+  page: number | null;
+  bbox: number[] | null;
+  value_type: ValueType;
 }
 
 export interface Mapping {
@@ -68,10 +79,17 @@ export interface Suggestion {
   field: FieldVal;
 }
 
+export interface LineItem {
+  description: FieldVal;
+  quantity: FieldVal;
+  unit_price: FieldVal;
+  amount: FieldVal;
+}
+
 export interface ReadResult {
   fields: ReadField[];
   suggestions: Suggestion[];
-  lines: unknown[];
+  lines: LineItem[];
   meta: { pages: number; ocr_used: boolean; fields_found: number; fields_total: number };
 }
 

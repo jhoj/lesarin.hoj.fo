@@ -50,6 +50,16 @@
   inset: 0;
 }
 
+.overlay.armed {
+  cursor: crosshair;
+}
+
+.box.draw-preview {
+  border: 1.5px dashed rgba(37, 99, 235, 0.9);
+  background: rgba(37, 99, 235, 0.1);
+  pointer-events: none;
+}
+
 .box {
   position: absolute;
   box-sizing: border-box;

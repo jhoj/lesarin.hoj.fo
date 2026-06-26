@@ -77,6 +77,30 @@ select {
   color: var(--accent);
 }
 
+/* Until a PDF is loaded the dropzone is the one thing to do — call it out. */
+.dropzone.highlight {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #eef3fe;
+  animation: dropPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes dropPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
+  }
+}
+
+/* Side panels are inert until a document is loaded. */
+.locked {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
 .status {
   margin-left: auto;
   color: var(--muted);
@@ -159,9 +183,19 @@ button.primary {
 .panel-head .actions button {
   border: 1px solid var(--line);
   background: #fff;
+  color: var(--ink);
   border-radius: 6px;
   padding: 0.25rem 0.6rem;
   cursor: pointer;
+}
+
+/* The primary (Save) button must keep its accent fill here — otherwise the
+   rule above flattens it to a white background while .primary's white text
+   stays, rendering "Save" as invisible white-on-white. */
+.panel-head .actions button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 
 .muted {
@@ -287,6 +321,12 @@ button.x {
   box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.18);
 }
 
+/* The field the wizard is currently asking you to map. */
+.map-row.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
+}
+
 .map-top {
   display: flex;
   align-items: center;
@@ -336,6 +376,113 @@ button.x {
   color: var(--muted);
   font-size: 0.8rem;
   align-self: center;
+}
+
+/* ---- first-time setup: suggested fields modal ---- */
+.suggest-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+
+.suggest-panel {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 1.1rem 1.3rem;
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+
+.suggest-panel h2 {
+  margin: 0 0 0.2rem;
+}
+
+.suggest-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+}
+
+.suggest-table th,
+.suggest-table td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.suggest-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.suggest-table input[type='text'] {
+  width: 100%;
+  min-width: 6rem;
+}
+
+.suggest-table tr.off {
+  opacity: 0.45;
+}
+
+.suggest-table .sv {
+  font-weight: 600;
+}
+
+.suggest-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.suggest-actions button {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+
+.suggest-actions button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* ---- line items ---- */
+.lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.lines-table th,
+.lines-table td {
+  text-align: left;
+  padding: 0.25rem 0.35rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.lines-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lines-table td.ld {
+  max-width: 180px;
+}
+
+.lines-table td.la {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---- suggestions ---- */

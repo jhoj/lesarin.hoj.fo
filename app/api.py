@@ -32,6 +32,7 @@ from .models import (
     OutputFieldOut,
     PageSize,
     ReadResult,
+    SuggestFieldsResult,
     TemplateIn,
     VendorIn,
     VendorOut,
@@ -110,13 +111,18 @@ def get_document_file(doc_id: str) -> Response:
 
 
 @router.post("/documents/{doc_id}/read", response_model=ReadResult)
-def read_document(doc_id: str, template: TemplateIn) -> ReadResult:
+def read_document(
+    doc_id: str, template: TemplateIn, session: Session = Depends(get_session)
+) -> ReadResult:
     entry = store.get(doc_id)
     if entry is None:
         raise HTTPException(404, "Document expired or not found — re-upload.")
     document = entry.document
 
-    located = templater.apply_template(document, template)
+    # Augment each field's label search with its taught read-labels (aliases), so
+    # e.g. an output field named "Vtal" still auto-locates a "V-tal" label.
+    aliases = {f.key: list(f.aliases or []) for f in repo.list_output_fields(session)}
+    located = templater.apply_template(document, template, aliases)
     suggestions = templater.suggestions(document, _CONFIG)
     lines = line_extractor.extract_line_items(document, _CONFIG)
     found = sum(1 for f in located if f.found)
@@ -133,16 +139,30 @@ def read_document(doc_id: str, template: TemplateIn) -> ReadResult:
     )
 
 
+@router.get("/documents/{doc_id}/suggest-fields", response_model=SuggestFieldsResult)
+def suggest_fields(doc_id: str) -> SuggestFieldsResult:
+    """Propose output fields detected on the document (for first-time setup)."""
+    entry = store.get(doc_id)
+    if entry is None:
+        raise HTTPException(404, "Document expired or not found — re-upload.")
+    return SuggestFieldsResult(suggestions=templater.field_suggestions(entry.document, _CONFIG))
+
+
 # ---- Output-field setup table ---------------------------------------------
+
+def _output_field_out(f) -> OutputFieldOut:
+    return OutputFieldOut(
+        key=f.key,
+        display_name=f.display_name,
+        value_type=f.value_type,
+        sort_order=f.sort_order,
+        aliases=list(f.aliases or []),
+    )
+
 
 @router.get("/output-fields", response_model=List[OutputFieldOut])
 def list_output_fields(session: Session = Depends(get_session)) -> List[OutputFieldOut]:
-    return [
-        OutputFieldOut(
-            key=f.key, display_name=f.display_name, value_type=f.value_type, sort_order=f.sort_order
-        )
-        for f in repo.list_output_fields(session)
-    ]
+    return [_output_field_out(f) for f in repo.list_output_fields(session)]
 
 
 @router.post("/output-fields", response_model=OutputFieldOut)
@@ -150,11 +170,9 @@ def upsert_output_field(
     field: OutputFieldIn, session: Session = Depends(get_session)
 ) -> OutputFieldOut:
     f = repo.upsert_output_field(
-        session, field.key, field.display_name, field.value_type, field.sort_order
+        session, field.key, field.display_name, field.value_type, field.sort_order, field.aliases
     )
-    return OutputFieldOut(
-        key=f.key, display_name=f.display_name, value_type=f.value_type, sort_order=f.sort_order
-    )
+    return _output_field_out(f)
 
 
 @router.delete("/output-fields/{key}")

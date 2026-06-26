@@ -39,6 +39,25 @@ def init_db() -> None:
     from . import db_models  # noqa: F401 — register mappers before create_all
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns(engine)
+
+
+def _ensure_columns(eng=None) -> None:
+    """Add columns introduced after a table already exists.
+
+    ``create_all`` only creates missing *tables*, not new columns, and there is
+    no migration tool — so back-fill additive columns here. Idempotent.
+    """
+    eng = eng or engine
+    additions = {
+        "output_fields": {"aliases": "ALTER TABLE output_fields ADD COLUMN aliases JSON"},
+    }
+    with eng.begin() as conn:
+        for table, columns in additions.items():
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.exec_driver_sql(ddl)
 
 
 def get_session():

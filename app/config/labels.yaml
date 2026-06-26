@@ -79,8 +79,58 @@ vendor:
     - "ship to"
     - "sold to"
 
+# Output fields proposed on import when the customer hasn't configured their
+# own yet. Each is located by its labels (read-labels become editable synonyms);
+# value beside/below the label. `suggested_key` is the editable export label.
+suggest:
+  - suggested_key: "VendorNo"
+    category: "vendor"
+    value_type: "number"
+    labels: ["v-tal", "vtal", "vat no", "cvr", "reg no"]
+  - suggested_key: "InvoiceNo"
+    category: "invoice"
+    value_type: "string"
+    labels: ["fakturanr", "faktura nr", "fakturanummer", "rokningarnr", "invoice no", "invoice number", "bilagsnr"]
+  - suggested_key: "InvoiceDate"
+    category: "invoice"
+    value_type: "date"
+    labels: ["fakturadato", "dagfesting", "dato", "date", "invoice date"]
+  - suggested_key: "DueDate"
+    category: "payment"
+    value_type: "date"
+    labels: ["gjaldsdagur", "gjalddagi", "betalingsfrist", "forfaldsdato", "due date", "payment due"]
+  - suggested_key: "TotalExclVat"
+    category: "totals"
+    value_type: "number"
+    labels: ["í alt uttan mvg", "subtotal", "net"]
+  - suggested_key: "Vat"
+    category: "totals"
+    value_type: "number"
+    labels: ["mvg", "moms", "vat"]
+  - suggested_key: "TotalInclVat"
+    category: "totals"
+    value_type: "number"
+    labels: ["í alt við mvg", "at betala", "total"]
+  - suggested_key: "AccountNo"
+    category: "payment"
+    value_type: "string"
+    labels: ["gjaldslykil", "konto", "account", "iban", "reg.nr"]
+
 # Line-item table column header keywords, mapped to canonical column names.
 lines:
+  # Phrases that mark the end of the line-item rows (the totals / summary block).
+  # Matched as substrings of a normalised line; the scan stops at the first hit.
+  terminators:
+    - "í alt"
+    - "i alt"
+    - "tilsamans"
+    - "samanlagt"
+    - "subtotal"
+    - "total"
+    - "moms"
+    - "mvg"
+    - "at betala"
+    - "at betale"
   columns:
     description:
       - "lýsing"
