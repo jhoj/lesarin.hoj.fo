@@ -1,0 +1,29 @@
+# systemd unit for the Lesarin FastAPI service.
+# Install to /etc/systemd/system/lesarin.service (setup-server.sh does this),
+# then: systemctl daemon-reload && systemctl enable --now lesarin
+[Unit]
+Description=Lesarin invoice SaaS (FastAPI/uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=lesarin
+Group=lesarin
+WorkingDirectory=/opt/lesarin
+# Secrets + paths (LESARIN_SECRET, LESARIN_DB). Created by setup-server.sh.
+EnvironmentFile=/etc/lesarin/lesarin.env
+# One worker keeps SQLite writes contention-free; raise --workers (or move to
+# Postgres) once you outgrow that. Bound to localhost — nginx terminates TLS.
+ExecStart=/opt/lesarin/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the service only needs to write its data dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/lesarin
+
+[Install]
+WantedBy=multi-user.target
