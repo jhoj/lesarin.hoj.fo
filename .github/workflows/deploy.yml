@@ -1,0 +1,87 @@
+name: Deploy
+
+# Runs when a PR is merged (i.e. a push lands on main). Builds the Angular app,
+# runs the backend tests as a gate, then ships to the VPS over SSH and restarts
+# the systemd service. Manual re-runs are available via the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never let two deploys overlap; queue them instead of cancelling so a half-
+# finished rsync is never interrupted.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Build the frontend (so the VPS needs no Node) ------------------
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build Angular app
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # --- Test the backend (deploy is gated on green) -------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps and run tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pytest -q
+
+      # --- Ship to the VPS ------------------------------------------------
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+
+      - name: Rsync code + built frontend to the server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT:-22}" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.venv' \
+            --exclude 'data' \
+            --exclude '__pycache__' \
+            --exclude '.pytest_cache' \
+            --exclude 'frontend/node_modules' \
+            --exclude 'frontend/.angular' \
+            ./ "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH:-/opt/lesarin}/"
+
+      - name: Install deps + restart service on the server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "bash ${DEPLOY_PATH:-/opt/lesarin}/deploy/deploy.sh"
