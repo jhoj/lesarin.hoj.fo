@@ -92,6 +92,18 @@ def _ensure_columns(eng=None) -> None:
                     conn.exec_driver_sql(ddl)
 
 
+def use_database(path: str | Path) -> None:
+    """Point the engine + session factory at a different SQLite file.
+
+    Lets the CLI honour ``--db`` without a process restart; the module-level
+    ``engine`` (used by ``init_db``) and ``SessionLocal`` are both rebound.
+    """
+    global engine, DB_PATH
+    DB_PATH = Path(path)
+    engine = _make_engine()
+    SessionLocal.configure(bind=engine)
+
+
 def get_session():
     """FastAPI dependency: yield a session, always closed afterwards."""
     session = SessionLocal()
