@@ -251,6 +251,56 @@ engine (label/region strategies), vendor/output CRUD + V-tal detection, the HTTP
 endpoints, plus the SaaS layer — auth tokens, output profiles, the four
 exporters, and the central "map once, everyone benefits" auto-learning.
 
+## Command-line tool (input → config → output, with a status)
+
+For automation pipelines there's a direct CLI — no HTTP server needed. It reads
+one invoice, and **if a saved vendor mapping exists it uses that** to gather the
+values; otherwise it falls back to layout heuristics so you still get a
+best-effort read. The result carries a **status** so a pipeline can branch on it.
+
+```bash
+python -m app.cli INVOICE.pdf --config job.yaml --output out.json
+```
+
+| Status | Meaning | Exit code |
+| --- | --- | --- |
+| `complete` | a vendor mapping (or your `require` list) was fully satisfied — trust it | `0` |
+| `incomplete` | output produced, but some expected fields are missing, or no vendor mapping matched (best-effort heuristic read) | `2` |
+| `failed` | the document could not be read at all | `1` |
+
+By default it prints the full **result** as JSON on stdout — the status, the
+**mapping that was applied**, every located field (with where it came from), what's
+missing, and the rendered output. Use `--bare` to print only the rendered document.
+
+```jsonc
+{
+  "status": "complete",
+  "reason": "all expected fields located",
+  "mapped": true,
+  "vendor": { "identifier": "314188", "name": "Effo", "matched": true },
+  "mapping": { "source": "template", "fields": [ /* the applied mapping */ ] },
+  "fields": { "InvoiceNo": { "value": "2026-0014", "found": true,
+                             "source": "template-label", "confidence": 0.9 } },
+  "missing_fields": [],
+  "output": { "format": "json", "body": "{ ... }" }
+}
+```
+
+Config (JSON or YAML, every key optional):
+
+```yaml
+db: data/lesarin.db        # mapping store to read (else $LESARIN_DB / default)
+format: json               # json | xml | ubl | oioubl
+fields:                    # optional: select + rename canonical fields
+  - canonical: InvoiceNo
+    output_name: invoice_id
+require: [InvoiceNo, DueDate]   # fields that must be present for 'complete'
+```
+
+Flags `--db`, `--format`, and `--require` override the config; `--output FILE`
+writes the rendered document to disk. The extraction logic is shared with the
+SaaS export path (`app/engine.py`), so the CLI and the web app read identically.
+
 ## Deploy
 
 A GitHub Actions pipeline ships to a single VPS on every merge to `main`: it
