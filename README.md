@@ -251,6 +251,118 @@ engine (label/region strategies), vendor/output CRUD + V-tal detection, the HTTP
 endpoints, plus the SaaS layer — auth tokens, output profiles, the four
 exporters, and the central "map once, everyone benefits" auto-learning.
 
+## Command-line tool (input → config → output, with a status)
+
+For automation pipelines there's a direct CLI — no HTTP server needed. It reads
+one invoice, and **if a saved vendor mapping exists it uses that** to gather the
+values; otherwise it falls back to layout heuristics so you still get a
+best-effort read. The result carries a **status** so a pipeline can branch on it.
+
+```bash
+python -m app.cli INVOICE.pdf --config job.yaml --output out.json
+```
+
+| Status | Meaning | Exit code |
+| --- | --- | --- |
+| `complete` | a vendor mapping (or your `require` list) was fully satisfied — trust it | `0` |
+| `incomplete` | output produced, but some expected fields are missing, or no vendor mapping matched (best-effort heuristic read) | `2` |
+| `failed` | the document could not be read at all | `1` |
+
+By default it prints the full **result** as JSON on stdout — the status, the
+**mapping that was applied**, every located field (with where it came from), what's
+missing, and the rendered output. Use `--bare` to print only the rendered document.
+
+```jsonc
+{
+  "status": "complete",
+  "reason": "all expected fields located",
+  "mapped": true,
+  "vendor": { "identifier": "314188", "name": "Effo", "matched": true },
+  "mapping": { "source": "template", "fields": [ /* the applied mapping */ ] },
+  "fields": { "InvoiceNo": { "value": "2026-0014", "found": true,
+                             "source": "template-label", "confidence": 0.9 } },
+  "missing_fields": [],
+  "output": { "format": "json", "body": "{ ... }" }
+}
+```
+
+Config (JSON or YAML, every key optional):
+
+```yaml
+db: data/lesarin.db        # mapping store to read (else $LESARIN_DB / default)
+format: json               # json | xml | ubl | oioubl
+fields:                    # optional: select + rename canonical fields
+  - canonical: InvoiceNo
+    output_name: invoice_id
+require: [InvoiceNo, DueDate]   # fields that must be present for 'complete'
+```
+
+Flags `--db`, `--format`, and `--require` override the config; `--output FILE`
+writes the rendered document to disk. The extraction logic is shared with the
+SaaS export path (`app/engine.py`), so the CLI and the web app read identically.
+
+### Validation
+
+Every result carries a `validation` block that cross-checks the values as an
+*invoice*: totals reconcile (net + VAT = gross), line amounts sum to the total,
+the due date isn't before the issue date, an invoice number and vendor identity
+were found, and currency/V-tal shapes look sane. Checks only run when their
+inputs are present, so a sparse read isn't punished twice. It's report-only by
+default; set `validate: strict` in the config to demote a "complete" read whose
+numbers don't hold together. The SaaS export mirrors this in response headers
+(`X-Lesarin-Source`, `X-Lesarin-Valid`, `X-Lesarin-Problems`).
+
+## The review loop (batch: read → correct → reprocess)
+
+For a folder of invoices, the workflow tool leaves a **result sidecar** beside
+each PDF and makes re-runs cheap:
+
+```bash
+python -m app.workflow process INBOX/ --config job.yaml
+python -m app.workflow status INBOX/          # what needs attention?
+```
+
+1. **Auto-read** — each `invoice.pdf` gets an `invoice.lesarin.json` (status,
+   the mapping applied, fields, validation, rendered output).
+2. **Correct** — open an *incomplete* document in the web studio (`/studio`),
+   fix the mapping visually, save the vendor template.
+3. **Reprocess** — run `process` again: only not-yet-complete documents are
+   re-read (use `--all` to force everything), so the corrected template flips
+   them to *complete* without touching finished work.
+
+Exit codes mirror the queue state (0 all complete · 2 needs review · 1 failures),
+so a scheduler can loop on it.
+
+### Sync the learned knowledge between sites
+
+The "brain" — per-vendor templates plus learned field synonyms — exports as one
+JSON bundle, which is the unit that syncs to a central store every now and then:
+
+```bash
+python -m app.sync export --out site-a.json     # at each site (cron-friendly)
+python -m app.sync import site-a.json           # at the centre (merge, never deletes)
+python -m app.sync import central.json --replace  # pull curated central knowledge
+```
+
+Merging is idempotent: alias lists union, unknown vendors are added whole, and a
+site's own teaching wins over an incoming bundle unless `--replace` says
+otherwise. To onboard a customer's expected fields (with their synonyms):
+
+```bash
+python -m app.sync import-fields customer-fields.yaml
+```
+
+## Deploy
+
+A GitHub Actions pipeline ships to a single VPS on every merge to `main`: it
+builds the Angular app, runs the backend tests as a gate, then rsyncs over SSH
+and restarts a systemd uvicorn service behind nginx (TLS via Let's Encrypt). The
+SQLite database lives outside the code dir, so deploys never touch your data.
+
+See **[`docs/deploy.md`](docs/deploy.md)** for the full setup — one-time server
+bootstrap (`deploy/setup-server.sh`), the SSH deploy key, and the GitHub secrets
+to add. The pipeline is [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+
 ## Roadmap
 
 - Optional local LLM mode (Ollama) as a fallback for layouts the heuristics miss,

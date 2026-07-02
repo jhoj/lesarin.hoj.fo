@@ -27,20 +27,15 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, exporters, repo
+from . import auth, canonical, engine, exporters, repo, validation
 from .db import get_session
 from .db_models import OutputProfile, ProfileField, User
-from .exporters import CanonicalInvoice, CanonicalLine
-from .extraction import fields as field_extractor
-from .extraction import lines as line_extractor
+from .exporters import CanonicalInvoice
 from .extraction import loader
-from .extraction import template as templater
-from .models import MappingIn, TemplateIn
 
 router = APIRouter(prefix="/api")
 
 _MAX_BYTES = 10 * 1024 * 1024
-_CONFIG = field_extractor.load_config()
 
 
 # --- Schemas ---------------------------------------------------------------
@@ -254,21 +249,6 @@ def _apply_default_flag(session: Session, user: User, profile: OutputProfile, is
 
 # --- Export pipeline -------------------------------------------------------
 
-def _lines_to_canonical(line_items) -> List[CanonicalLine]:
-    out: List[CanonicalLine] = []
-    for ln in line_items:
-        out.append(
-            CanonicalLine(
-                description=ln.description.value,
-                quantity=ln.quantity.value,
-                unit=ln.unit.value,
-                unit_price=ln.unit_price.value,
-                amount=ln.amount.value,
-            )
-        )
-    return out
-
-
 def _suggestions_to_mappings(suggestions) -> List[dict]:
     """Turn first-pass heuristic field suggestions into vendor template mappings."""
     mappings: List[dict] = []
@@ -294,44 +274,24 @@ def _suggestions_to_mappings(suggestions) -> List[dict]:
 
 def build_canonical(
     session: Session, document: loader.Document, learn_as_user: Optional[int] = None
-) -> CanonicalInvoice:
-    """Project a parsed document onto the canonical vocabulary.
+) -> tuple[CanonicalInvoice, "engine.CanonicalExtraction"]:
+    """Project a parsed document onto the canonical vocabulary, then — if the
+    vendor was previously unknown but identifiable — learn it centrally for next
+    time. The projection itself lives in :mod:`app.engine`, shared with the CLI.
 
-    Central template first, heuristics to fill the gaps, then — if the vendor was
-    previously unknown but is identifiable — learn it centrally for next time.
+    Returns the format-neutral invoice plus the raw extraction (so callers can
+    report how the read went: template vs heuristic, per-field confidence).
     """
-    text = templater.document_text(document)
-    vendor = repo.detect_vendor(session, text)
-    values: dict = {}
-
-    if vendor is not None and vendor.mappings:
-        template = TemplateIn(fields=[
-            MappingIn(
-                output=m.output_key, strategy=m.strategy, label=m.source_label,
-                relation=m.relation, value_type=m.value_type, page=m.page, bbox=m.bbox,
-            )
-            for m in vendor.mappings
-        ])
-        for rf in templater.apply_template(document, template):
-            if rf.found:
-                values[rf.output] = rf.value
-
-    # Fill anything the template didn't cover from layout heuristics — this is
-    # what lets a never-taught vendor still produce output the first time.
-    suggestions = templater.field_suggestions(document, _CONFIG)
-    for s in suggestions:
-        if s.value is not None:
-            values.setdefault(s.suggested_key, s.value)
-    values.setdefault("Currency", field_extractor.detect_currency(document))
-
-    lines = _lines_to_canonical(line_extractor.extract_line_items(document, _CONFIG))
+    ext = engine.extract(session, document)
+    values = ext.values()
+    values.setdefault("Currency", None)  # keep the key present even when unknown
 
     # Auto-learn: store a central template for a vendor we could identify but
     # hadn't seen before, so the next customer's upload is an instant hit.
-    if vendor is None:
-        _maybe_learn_vendor(session, values, suggestions, learn_as_user)
+    if ext.vendor is None:
+        _maybe_learn_vendor(session, values, ext.suggestions, learn_as_user)
 
-    return CanonicalInvoice(values=values, lines=lines)
+    return CanonicalInvoice(values=values, lines=ext.lines), ext
 
 
 def _maybe_learn_vendor(session: Session, values: dict, suggestions, learn_as_user) -> None:
@@ -384,7 +344,7 @@ async def export_invoice(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
-    invoice = build_canonical(session, document, learn_as_user=user.id)
+    invoice, extraction = build_canonical(session, document, learn_as_user=user.id)
 
     profile = _resolve_profile(session, user, profile_id)
     profile_fields = (
@@ -397,5 +357,13 @@ async def export_invoice(
 
     rendered = exporters.render(invoice, out_fmt, profile_fields)
     stem = (file.filename or "invoice").rsplit(".", 1)[0]
-    headers = {"Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"'}
+    # Machine-readable read quality, so automation callers can branch without
+    # parsing the body: how the read was made and whether the numbers held up.
+    check = validation.validate(extraction.values(), extraction.lines)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"',
+        "X-Lesarin-Source": extraction.source,          # template | heuristic | none
+        "X-Lesarin-Valid": "true" if check["valid"] else "false",
+        "X-Lesarin-Problems": str(len(check["problems"])),
+    }
     return Response(content=rendered.body, media_type=rendered.media_type, headers=headers)
