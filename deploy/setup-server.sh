@@ -68,9 +68,10 @@ fi
 cat <<'DONE'
 
 ==> Done. Next:
-  1. Point your domain's A/AAAA record at this server.
-  2. Edit server_name in /etc/nginx/sites-available/lesarin, then:
+  1. Point lesarin.hoj.fo's A/AAAA record at this server (or edit server_name
+     in /etc/nginx/sites-available/lesarin for another hostname).
+  2. Get a certificate:
        sudo apt-get install -y certbot python3-certbot-nginx
-       sudo certbot --nginx -d your.domain
+       sudo certbot --nginx -d lesarin.hoj.fo
   3. Add the GitHub repo secrets (see docs/deploy.md) and merge to main.
 DONE

@@ -44,12 +44,14 @@ sudo -u deploy git clone https://github.com/jhoj/lesarin.hoj.fo.git /opt/lesarin
 sudo DEPLOY_USER=deploy bash /opt/lesarin/deploy/setup-server.sh
 ```
 
-Then get a certificate (point your domain at the VPS first, and set
-`server_name` in `/etc/nginx/sites-available/lesarin`):
+Then get a certificate (point the domain at the VPS first — the nginx config
+ships with `server_name lesarin.hoj.fo`, so add an A/AAAA record for
+`lesarin.hoj.fo` → the hoj.fo VPS, or edit
+`/etc/nginx/sites-available/lesarin` if you prefer another hostname):
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your.domain
+sudo certbot --nginx -d lesarin.hoj.fo
 ```
 
 ## 2. The deploy SSH key

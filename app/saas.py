@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, engine, exporters, repo
+from . import auth, canonical, engine, exporters, repo, validation
 from .db import get_session
 from .db_models import OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
@@ -274,10 +274,13 @@ def _suggestions_to_mappings(suggestions) -> List[dict]:
 
 def build_canonical(
     session: Session, document: loader.Document, learn_as_user: Optional[int] = None
-) -> CanonicalInvoice:
+) -> tuple[CanonicalInvoice, "engine.CanonicalExtraction"]:
     """Project a parsed document onto the canonical vocabulary, then — if the
     vendor was previously unknown but identifiable — learn it centrally for next
     time. The projection itself lives in :mod:`app.engine`, shared with the CLI.
+
+    Returns the format-neutral invoice plus the raw extraction (so callers can
+    report how the read went: template vs heuristic, per-field confidence).
     """
     ext = engine.extract(session, document)
     values = ext.values()
@@ -288,7 +291,7 @@ def build_canonical(
     if ext.vendor is None:
         _maybe_learn_vendor(session, values, ext.suggestions, learn_as_user)
 
-    return CanonicalInvoice(values=values, lines=ext.lines)
+    return CanonicalInvoice(values=values, lines=ext.lines), ext
 
 
 def _maybe_learn_vendor(session: Session, values: dict, suggestions, learn_as_user) -> None:
@@ -341,7 +344,7 @@ async def export_invoice(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
-    invoice = build_canonical(session, document, learn_as_user=user.id)
+    invoice, extraction = build_canonical(session, document, learn_as_user=user.id)
 
     profile = _resolve_profile(session, user, profile_id)
     profile_fields = (
@@ -354,5 +357,13 @@ async def export_invoice(
 
     rendered = exporters.render(invoice, out_fmt, profile_fields)
     stem = (file.filename or "invoice").rsplit(".", 1)[0]
-    headers = {"Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"'}
+    # Machine-readable read quality, so automation callers can branch without
+    # parsing the body: how the read was made and whether the numbers held up.
+    check = validation.validate(extraction.values(), extraction.lines)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"',
+        "X-Lesarin-Source": extraction.source,          # template | heuristic | none
+        "X-Lesarin-Valid": "true" if check["valid"] else "false",
+        "X-Lesarin-Problems": str(len(check["problems"])),
+    }
     return Response(content=rendered.body, media_type=rendered.media_type, headers=headers)

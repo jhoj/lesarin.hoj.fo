@@ -301,6 +301,57 @@ Flags `--db`, `--format`, and `--require` override the config; `--output FILE`
 writes the rendered document to disk. The extraction logic is shared with the
 SaaS export path (`app/engine.py`), so the CLI and the web app read identically.
 
+### Validation
+
+Every result carries a `validation` block that cross-checks the values as an
+*invoice*: totals reconcile (net + VAT = gross), line amounts sum to the total,
+the due date isn't before the issue date, an invoice number and vendor identity
+were found, and currency/V-tal shapes look sane. Checks only run when their
+inputs are present, so a sparse read isn't punished twice. It's report-only by
+default; set `validate: strict` in the config to demote a "complete" read whose
+numbers don't hold together. The SaaS export mirrors this in response headers
+(`X-Lesarin-Source`, `X-Lesarin-Valid`, `X-Lesarin-Problems`).
+
+## The review loop (batch: read → correct → reprocess)
+
+For a folder of invoices, the workflow tool leaves a **result sidecar** beside
+each PDF and makes re-runs cheap:
+
+```bash
+python -m app.workflow process INBOX/ --config job.yaml
+python -m app.workflow status INBOX/          # what needs attention?
+```
+
+1. **Auto-read** — each `invoice.pdf` gets an `invoice.lesarin.json` (status,
+   the mapping applied, fields, validation, rendered output).
+2. **Correct** — open an *incomplete* document in the web studio (`/studio`),
+   fix the mapping visually, save the vendor template.
+3. **Reprocess** — run `process` again: only not-yet-complete documents are
+   re-read (use `--all` to force everything), so the corrected template flips
+   them to *complete* without touching finished work.
+
+Exit codes mirror the queue state (0 all complete · 2 needs review · 1 failures),
+so a scheduler can loop on it.
+
+### Sync the learned knowledge between sites
+
+The "brain" — per-vendor templates plus learned field synonyms — exports as one
+JSON bundle, which is the unit that syncs to a central store every now and then:
+
+```bash
+python -m app.sync export --out site-a.json     # at each site (cron-friendly)
+python -m app.sync import site-a.json           # at the centre (merge, never deletes)
+python -m app.sync import central.json --replace  # pull curated central knowledge
+```
+
+Merging is idempotent: alias lists union, unknown vendors are added whole, and a
+site's own teaching wins over an incoming bundle unless `--replace` says
+otherwise. To onboard a customer's expected fields (with their synonyms):
+
+```bash
+python -m app.sync import-fields customer-fields.yaml
+```
+
 ## Deploy
 
 A GitHub Actions pipeline ships to a single VPS on every merge to `main`: it

@@ -89,7 +89,7 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
 
     Pure of any I/O beyond reading the input file, so it's easy to test.
     """
-    from . import engine
+    from . import engine, validation
     from .db import SessionLocal
     from .extraction import loader
 
@@ -128,6 +128,14 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
         status = "complete"
         reason = "all expected fields located"
 
+    # Cross-check the values (totals reconcile, lines sum, date order, shapes).
+    # Report-only by default; `validate: strict` in the config demotes a
+    # "complete" read whose numbers don't hold together.
+    validation_report = validation.validate(extraction.values(), extraction.lines)
+    if config.get("validate") == "strict" and status == "complete" and not validation_report["valid"]:
+        status = "incomplete"
+        reason = "validation failed: " + "; ".join(validation_report["problems"])
+
     body = _render(extraction, config, fmt)
     vendor = extraction.vendor
     report = {
@@ -147,6 +155,7 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
         },
         "expected": expected,
         "missing_fields": missing,
+        "validation": validation_report,
         "lines": [ln.as_dict() for ln in extraction.lines],
         "output": {"format": fmt, "body": body},
     }
