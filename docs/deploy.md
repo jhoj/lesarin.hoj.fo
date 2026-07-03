@@ -1,98 +1,96 @@
-# Deploying Lesarin to a VPS (GitHub Actions → SSH)
+# Deploying Lesarin to the VPS (GitHub Actions → self-hosted runner)
 
-When a pull request is merged into `main`, GitHub Actions builds the Angular app,
-runs the backend tests, and — only if they pass — ships the code to your VPS over
-SSH and restarts the service. This is a single-VPS, no-Docker setup: uvicorn runs
-under systemd, nginx terminates TLS, and the SQLite database lives on disk and
-persists across deploys.
+When a pull request is merged into `main`, GitHub-hosted machines build the
+Angular app and run the backend tests. Only if everything is green does the
+**runner installed on the VPS** pick up the deploy job and put the release in
+place locally — copy the files, refresh the Python environment, restart the
+service.
+
+There are **no SSH keys and no repository secrets**: the runner is a small
+official GitHub agent that lives on the server and only makes *outbound* HTTPS
+calls to GitHub asking for work. The server never has to accept an incoming
+connection, and nothing secret is stored outside it. To sever the link, remove
+the runner in the repo settings.
 
 ```
- merge to main ──► GitHub Actions ──► build frontend (Node 24)
-                                  ──► pytest (gate)
-                                  ──► rsync code + dist over SSH
-                                  ──► ssh: pip install + systemctl restart
-                                              │
-                       nginx :443 (TLS) ──────┴──► uvicorn 127.0.0.1:8000
-                                                   data: /var/lib/lesarin/lesarin.db
+ merge to main ──► GitHub-hosted: build frontend (Node 24) + pytest gate
+                                   │  (artifact: built UI)
+                VPS runner (asks GitHub for work, outbound HTTPS only)
+                                   ▼
+                   copy release → /opt/lesarin → pip install → restart
+                                   │
+            nginx :443 (TLS) ──────┴──► uvicorn 127.0.0.1:8000
+                                        data: /var/lib/lesarin/lesarin.db
 ```
 
 Files involved:
 
 | Path | Role |
 | --- | --- |
-| `.github/workflows/deploy.yml` | the CI/CD pipeline (build, test, ship) |
-| `deploy/setup-server.sh` | one-time VPS bootstrap (deps, user, dirs, secret, unit, nginx) |
+| `.github/workflows/deploy.yml` | build + test on GitHub, deploy on the VPS runner |
+| `deploy/setup-server.sh` | one-time VPS bootstrap (deps, users, dirs, secret, unit, nginx) |
 | `deploy/deploy.sh` | server-side step each deploy: venv + deps + restart |
 | `deploy/lesarin.service` | systemd unit (uvicorn) |
-| `deploy/nginx-lesarin.conf` | reverse-proxy config |
+| `deploy/nginx-lesarin.conf` | reverse proxy (`server_name lesarin.hoj.fo`) |
 
-## 1. One-time server setup
+## One-time server setup (~10 minutes)
 
 On the VPS (Ubuntu/Debian), as a sudo-capable user:
 
 ```bash
-# a) A dedicated 'deploy' login for GitHub Actions (no password; key only).
+# a) A dedicated 'deploy' login that will own the app dir and run the runner.
 sudo adduser --disabled-password --gecos "" deploy
 
-# b) Put the code in place once so the setup script has deploy/ + .git.
+# b) Put the code in place once.
 sudo apt-get update && sudo apt-get install -y git
 sudo -u deploy git clone https://github.com/jhoj/lesarin.hoj.fo.git /opt/lesarin
-# (private repo? use a clone URL/credential you control, or scp the repo up.)
 
 # c) Bootstrap: system deps incl. OCR, service user, data dir, signing secret,
-#    systemd unit, nginx site, and a one-line sudoers rule for the restart.
+#    systemd unit, nginx site, and the scoped sudo rule for restarts.
 sudo DEPLOY_USER=deploy bash /opt/lesarin/deploy/setup-server.sh
 ```
 
-Then get a certificate (point the domain at the VPS first — the nginx config
-ships with `server_name lesarin.hoj.fo`, so add an A/AAAA record for
-`lesarin.hoj.fo` → the hoj.fo VPS, or edit
-`/etc/nginx/sites-available/lesarin` if you prefer another hostname):
+### Install the GitHub runner
+
+In the repo on GitHub: **Settings → Actions → Runners → New self-hosted
+runner → Linux**. GitHub shows a short block of commands with a fresh token —
+run them on the VPS **as the `deploy` user** (`sudo -iu deploy`), inside e.g.
+`/home/deploy/actions-runner`. Then install it as a service so it survives
+reboots:
+
+```bash
+sudo ./svc.sh install deploy
+sudo ./svc.sh start
+```
+
+The runner should now show as **Idle** on the Runners settings page.
+
+### HTTPS
+
+Point `lesarin.hoj.fo`'s A/AAAA record at the VPS, then:
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d lesarin.hoj.fo
 ```
 
-## 2. The deploy SSH key
+## Deploy
 
-GitHub Actions authenticates to the VPS with a dedicated key pair:
+Merge a PR into `main` (or run the **Deploy** workflow manually from the
+Actions tab). Build + tests run on GitHub; the deploy job appears on your
+runner seconds later. The run goes red if tests fail or the service doesn't
+come back up, so a broken build never reaches users.
 
-```bash
-# On your machine (or the server): generate a key with no passphrase.
-ssh-keygen -t ed25519 -f lesarin_deploy -N "" -C "github-actions"
-
-# Authorise the PUBLIC key for the deploy user on the VPS:
-ssh-copy-id -i lesarin_deploy.pub deploy@your.server   # or append to
-                                                        # ~deploy/.ssh/authorized_keys
-```
-
-## 3. GitHub repository secrets
-
-In the repo: **Settings → Secrets and variables → Actions → New repository secret**.
-
-| Secret | Value |
-| --- | --- |
-| `SSH_PRIVATE_KEY` | contents of the **private** `lesarin_deploy` file |
-| `SSH_HOST` | the VPS IP or hostname |
-| `SSH_USER` | `deploy` |
-| `SSH_PORT` | *(optional)* SSH port if not `22` |
-| `DEPLOY_PATH` | *(optional)* code dir if not `/opt/lesarin` |
-
-## 4. Deploy
-
-Merge a PR into `main` (or run the **Deploy** workflow manually from the Actions
-tab). The run goes red if the tests fail or the service doesn't come back up, so
-a broken build never reaches users.
+> Until the runner is installed, the deploy job simply waits in the queue —
+> the first successful run happens as soon as the runner shows Idle.
 
 ## How data and config persist
 
 - **Database** — `/var/lib/lesarin/lesarin.db`, *outside* the code dir, so the
-  `rsync --delete` never touches it. Schema changes are applied automatically by
-  `init_db()` at startup (it creates tables, seeds the canonical vocabulary, and
-  back-fills new columns), so there's no separate migration step.
+  release sync never touches it. Schema changes are applied automatically by
+  `init_db()` at startup (tables, canonical vocabulary, back-filled columns).
 - **Token secret** — `LESARIN_SECRET` in `/etc/lesarin/lesarin.env`, generated
-  once. Pinning it keeps everyone logged in across restarts and deploys.
+  once by the bootstrap. Pinning it keeps everyone logged in across deploys.
 - **Backups** — the whole state is one file. A nightly
   `sqlite3 /var/lib/lesarin/lesarin.db ".backup '/var/backups/lesarin-$(date +\%F).db'"`
   cron job is plenty to start.
@@ -111,11 +109,15 @@ sudo systemctl daemon-reload && sudo systemctl restart lesarin
 ## Troubleshooting
 
 ```bash
-sudo systemctl status lesarin --no-pager      # is it up?
-sudo journalctl -u lesarin -n 100 --no-pager  # app logs
-curl -sS http://127.0.0.1:8000/health         # does the app answer locally?
-sudo nginx -t && sudo systemctl reload nginx   # proxy config sane?
+sudo systemctl status lesarin --no-pager        # is the app up?
+sudo journalctl -u lesarin -n 100 --no-pager    # app logs
+curl -sS http://127.0.0.1:8000/health           # does the app answer locally?
+sudo nginx -t && sudo systemctl reload nginx    # proxy config sane?
+sudo systemctl status 'actions.runner.*'        # is the runner service up?
 ```
+
+If a deploy job sits queued forever, the runner is offline — check the last
+line above, or the Runners page in repo settings.
 
 ## Scaling past SQLite
 

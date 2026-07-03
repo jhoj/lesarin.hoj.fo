@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Server-side deploy step, invoked over SSH by the GitHub Actions workflow after
-# the new code + built frontend have been rsynced into place. Idempotent: it
+# Server-side deploy step, run by the self-hosted GitHub Actions runner after
+# the new code + built frontend have been synced into place. Idempotent: it
 # refreshes the virtualenv, installs deps, and restarts the service. The schema
 # is created/migrated automatically by init_db() at app startup, so there is no
 # separate migration step.
