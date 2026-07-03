@@ -1,21 +1,23 @@
 name: Deploy
 
-# Runs when a PR is merged (i.e. a push lands on main). Builds the Angular app,
-# runs the backend tests as a gate, then ships to the VPS over SSH and restarts
-# the systemd service. Manual re-runs are available via the Actions tab.
+# Runs when a PR is merged (i.e. a push lands on main). GitHub-hosted machines
+# do the heavy lifting — build the Angular app and run the backend tests — and
+# only if everything is green does the *self-hosted runner on the VPS* pick up
+# the deploy job and put the release in place locally. No SSH keys or secrets:
+# the runner only makes outbound HTTPS calls to GitHub.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 # Never let two deploys overlap; queue them instead of cancelling so a half-
-# finished rsync is never interrupted.
+# finished sync is never interrupted.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,43 +47,38 @@ jobs:
           pip install -r requirements.txt
           pytest -q
 
-      # --- Ship to the VPS ------------------------------------------------
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
+      # --- Hand the built UI to the deploy job ---------------------------
+      - name: Upload built frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/lesarin/browser
+          retention-days: 3
 
-      - name: Rsync code + built frontend to the server
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+  deploy:
+    needs: build-test
+    # The runner installed on the VPS (Settings → Actions → Runners). It runs
+    # as the local 'deploy' user, so everything below happens on the server
+    # itself — no SSH, no secrets.
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore built frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/lesarin/browser
+
+      - name: Sync release into place
         run: |
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT:-22}" \
+          rsync -a --delete \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.venv' \
             --exclude 'data' \
             --exclude '__pycache__' \
-            --exclude '.pytest_cache' \
-            --exclude 'frontend/node_modules' \
-            --exclude 'frontend/.angular' \
-            ./ "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH:-/opt/lesarin}/"
+            ./ /opt/lesarin/
 
-      - name: Install deps + restart service on the server
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" \
-            "${SSH_USER}@${SSH_HOST}" \
-            "bash ${DEPLOY_PATH:-/opt/lesarin}/deploy/deploy.sh"
+      - name: Install deps + restart service
+        run: bash /opt/lesarin/deploy/deploy.sh

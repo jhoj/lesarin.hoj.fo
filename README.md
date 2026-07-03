@@ -354,14 +354,16 @@ python -m app.sync import-fields customer-fields.yaml
 
 ## Deploy
 
-A GitHub Actions pipeline ships to a single VPS on every merge to `main`: it
-builds the Angular app, runs the backend tests as a gate, then rsyncs over SSH
-and restarts a systemd uvicorn service behind nginx (TLS via Let's Encrypt). The
-SQLite database lives outside the code dir, so deploys never touch your data.
+A GitHub Actions pipeline ships to the VPS on every merge to `main`: GitHub's
+machines build the Angular app and run the backend tests as a gate, then a
+**self-hosted runner on the VPS** picks up the deploy job and puts the release
+in place locally — no SSH keys, no repository secrets, outbound HTTPS only.
+uvicorn runs under systemd behind nginx (TLS via Let's Encrypt), and the SQLite
+database lives outside the code dir, so deploys never touch your data.
 
 See **[`docs/deploy.md`](docs/deploy.md)** for the full setup — one-time server
-bootstrap (`deploy/setup-server.sh`), the SSH deploy key, and the GitHub secrets
-to add. The pipeline is [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+bootstrap (`deploy/setup-server.sh`) and installing the runner. The pipeline is
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
 ## Roadmap
 
