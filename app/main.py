@@ -12,15 +12,18 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy.exc import OperationalError
 
 from . import __version__
+from . import repo
 from .api import router as api_router
 from .saas import router as saas_router
-from .db import init_db
+from .db import SessionLocal, init_db
 from .extraction import fields as field_extractor
 from .extraction import lines as line_extractor
 from .extraction import loader
-from .models import InvoiceResult
+from .extraction import template as templater
+from .models import Field, InvoiceResult, MappingIn, TemplateIn
 
 
 @asynccontextmanager
@@ -53,6 +56,20 @@ _MAX_BYTES = 10 * 1024 * 1024
 # Load the label dictionary once at startup.
 _CONFIG = field_extractor.load_config()
 
+_LEGACY_OUTPUTS = {
+    "invoiceno": "invoiceno",
+    "invoice_no": "invoiceno",
+    "invoicenumber": "invoiceno",
+    "sentdate": "sentdate",
+    "invoicedate": "sentdate",
+    "invoice_date": "sentdate",
+    "paydate": "paydate",
+    "duedate": "paydate",
+    "due_date": "paydate",
+    "vendorname": "vendor.name",
+    "vendor_name": "vendor.name",
+}
+
 # Mount the /api surface: vendor-template studio (api_router) + the SaaS
 # customer surface — accounts, output profiles, one-shot export (saas_router).
 app.include_router(api_router)
@@ -62,6 +79,71 @@ app.include_router(saas_router)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": __version__, "ocr_language": loader.ocr_language()}
+
+
+def _legacy_slot(output: str) -> str | None:
+    return _LEGACY_OUTPUTS.get(output.replace("-", "_").lower())
+
+
+def _field_from_template(field) -> Field:
+    data = field.model_dump(include={"value", "raw", "page", "bbox", "confidence", "source_label"})
+    return Field(**data)
+
+
+def _legacy_template(document: loader.Document) -> TemplateIn | None:
+    text = templater.document_text(document)
+
+    with SessionLocal() as session:
+        vendor = repo.detect_vendor(session, text)
+        if vendor is None or not vendor.mappings:
+            return None
+        return TemplateIn(
+            fields=[
+                MappingIn(
+                    output=m.output_key,
+                    strategy=m.strategy,
+                    label=m.source_label,
+                    relation=m.relation,
+                    value_type=m.value_type,
+                    page=m.page,
+                    bbox=m.bbox,
+                )
+                for m in vendor.mappings
+                if _legacy_slot(m.output_key) is not None
+            ]
+        )
+
+
+def _apply_saved_template(document: loader.Document, result: InvoiceResult) -> None:
+    """Overlay compatible saved-template values onto the legacy response shape."""
+    try:
+        template = _legacy_template(document)
+    except OperationalError:
+        # Direct TestClient/app calls may bypass lifespan; production startup has
+        # already run init_db(), but this keeps the legacy endpoint harmless.
+        init_db()
+        template = _legacy_template(document)
+
+    if template is None or not template.fields:
+        return
+
+    for field in templater.apply_template(document, template):
+        if not field.found:
+            continue
+        slot = _legacy_slot(field.output)
+        if slot == "invoiceno":
+            result.invoiceno = _field_from_template(field)
+        elif slot == "sentdate":
+            result.sentdate = _field_from_template(field)
+        elif slot == "paydate":
+            result.paydate = _field_from_template(field)
+        elif slot == "vendor.name":
+            result.vendor.name = _field_from_template(field)
+
+    result.meta.fields_found = sum(
+        1 for field in (result.invoiceno, result.sentdate, result.paydate, result.vendor.name)
+        if field.found
+    )
 
 
 @app.post("/extract", response_model=InvoiceResult)
@@ -83,6 +165,7 @@ async def extract(file: UploadFile = File(...)) -> InvoiceResult:
         raise HTTPException(status_code=422, detail=f"Could not read PDF: {exc}") from exc
 
     result = field_extractor.extract(document, filename=file.filename, config=_CONFIG)
+    _apply_saved_template(document, result)
     result.lines = line_extractor.extract_line_items(document, _CONFIG)
     return result
 

@@ -83,6 +83,23 @@ def test_production_extract_uses_detected_template(client, sample_invoice_pdf):
     assert result["fields"][0]["value"] == "2026-0014"
 
 
+def test_legacy_extract_overlays_detected_template(client, sample_invoice_pdf):
+    # The root /extract response keeps the old InvoiceResult shape, but it should
+    # still benefit from known vendor templates for compatible canonical fields.
+    client.post("/api/vendors", json={
+        "identifier": "314188", "name": "Effo", "match_keywords": ["Føroya Handil"],
+        "mappings": [{
+            "output": "DueDate", "strategy": "label", "label": "Fakturadato",
+            "value_type": "date",
+        }],
+    })
+    result = client.post(
+        "/extract", files={"file": ("inv.pdf", sample_invoice_pdf, "application/pdf")}
+    ).json()
+    assert result["paydate"]["value"] == "2026-01-12"
+    assert result["paydate"]["source_label"] == "Fakturadato"
+
+
 def test_unknown_document_read_404(client):
     r = client.post("/api/documents/deadbeef/read", json={"fields": []})
     assert r.status_code == 404

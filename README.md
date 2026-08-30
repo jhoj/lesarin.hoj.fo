@@ -19,8 +19,9 @@ value sits. Fields it can't locate come back empty rather than guessed.
 - **No paid/hosted service.** Everything runs locally and free: positions from
   `pdfplumber`, OCR from Tesseract, structuring from a layout-aware heuristic
   (label + position), dates via `dateparser`. No API keys, no per-document cost.
-- **No per-vendor templates.** Extraction keys off a shared, multilingual label
-  vocabulary (Faroese / Danish / English), so it generalises across layouts.
+- **Templates where they help.** The first pass still uses a shared,
+  multilingual label vocabulary (Faroese / Danish / English), and taught
+  per-vendor templates can then make known supplier layouts deterministic.
 
 ## How it works
 

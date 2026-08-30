@@ -9,7 +9,13 @@ from __future__ import annotations
 import atexit
 import io
 import os
+import sys
 import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # Point the SQLite store at a throwaway temp file BEFORE any app module imports
 # app.db (which binds its engine at import time). Keeps tests off data/lesarin.db.
