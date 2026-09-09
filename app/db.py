@@ -81,6 +81,11 @@ def _ensure_columns(eng=None) -> None:
         "vendors": {
             "created_by_user_id": "ALTER TABLE vendors ADD COLUMN created_by_user_id INTEGER"
         },
+        "users": {
+            "token_version": "ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0",
+            "failed_login_count": "ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0",
+            "locked_until": "ALTER TABLE users ADD COLUMN locked_until DATETIME",
+        },
     }
     with eng.begin() as conn:
         for table, columns in additions.items():
