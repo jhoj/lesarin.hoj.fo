@@ -82,37 +82,83 @@ still contributes a *layout observation* (see the fingerprint below), because
 knowing that a layout exists is useful even when the reading of it wasn't
 trusted — but it never becomes a template anyone else receives.
 
-### Promotion
+### Getting published
 
 Candidates do not go straight into circulation:
 
-| State | How it gets there | Who sees it |
+| State | How it gets there | Who receives it |
 | --- | --- | --- |
-| `unverified` | one site contributed it | only the site that produced it |
-| `corroborated` | a second, independent site produced an equivalent mapping | published automatically |
-| `verified` | a human at the centre reviewed it in the studio | published |
-| `retired` | superseded, or withdrawn after producing bad reads | nobody; kept for audit |
+| `seen once` | one customer produced it | only that customer |
+| `agreed` | a second customer produced the same mapping | everyone, automatically |
+| `checked` | a human at the centre looked at it | everyone |
+| `withdrawn` | superseded, or it started producing bad reads | nobody; kept for audit |
 
-Sites pull `corroborated` and `verified` only. Two independent sites agreeing is
-strong evidence: they have different invoices from the same supplier, and the
-same mapping worked for both. One site agreeing with itself is not evidence, so
-corroboration must come from a different site identity.
+**Publishing is automatic once two customers agree. No human has to approve
+anything.** That is the whole point: if every new supplier in the country waits
+for one person to review it, that person is the product's ceiling. Human review
+(`checked`) exists as a way to fix or bless something deliberately, never as a
+step the flow waits on.
 
-"Equivalent" means the same canonical field resolved by the same strategy to the
+Two customers agreeing is strong evidence: different invoices from the same
+supplier, and the same mapping worked for both. One customer agreeing with
+itself is not evidence, so the second must be a different customer.
+
+**A customer counts once, wherever they run.** Hosted or installed on their own
+server, one customer is one voice. Counting deployments instead would let a
+single customer with three installations publish to everyone on their own, and
+would make the hosted service — where most customers will be — count as one.
+
+"The same mapping" means the same field resolved by the same strategy to the
 same label, or to a region within a small tolerance — not byte-identical JSON.
 
-A site's own teaching always beats an incoming template, which is already how
-[`app/sync.py`](../app/sync.py) merges bundles. Nothing the centre publishes can
-silently overwrite a mapping a customer fixed by hand.
+A customer's own teaching always beats an incoming template, which is already
+how [`app/sync.py`](../app/sync.py) merges bundles. Nothing the centre publishes
+can silently overwrite a mapping someone fixed by hand.
 
-### Withdrawing
+## Two kinds of knowledge
 
-Promotion is reversible. Export history records, per read, whether a template
-was applied and whether the result reconciled. A published template whose reads
-start failing validation across sites is evidence it was wrong or the supplier
-changed their layout: retire it, and let the next corroboration replace it.
-Because every template change is versioned
-(`vendor_template_versions`), retiring is a rollback, not a loss.
+Everything above describes one kind: **this supplier prints the invoice number
+here**. That only helps the next customer who receives an invoice from that same
+supplier.
+
+There is a second kind, and it is the more valuable one: **the word "Fakturanr"
+generally means invoice number**. That helps with suppliers nobody has ever
+seen, which is most of them, and it is why a brand-new supplier often produces a
+useful read on the very first try.
+
+So the parser contributes more than the fields it managed to map. On every read
+it harvests **every label-shaped token it can find** — the ones it understood,
+the ones it didn't, and where each sits relative to the value beside it. A token
+it can't place today is exactly the one worth learning:
+
+- A label seen at one customer is a curiosity.
+- The same label seen at many customers, in the same position relative to the
+  same kind of value, is a fact about how invoices are written in this language.
+
+That is how `app/config/labels.yaml` stops being a list somebody maintains by
+hand and starts being something the product learns. The vocabulary is shared
+across every supplier at once, so it improves the cold-start case that per-vendor
+templates by definition cannot touch.
+
+### Harvesting everything without leaking anything
+
+Sending every token found on the page collides with the rule in *What crosses
+the wire*, which said label text is allowlisted against `labels.yaml`. Both
+matter, so the resolution is a threshold rather than a filter:
+
+1. **Only label-shaped tokens.** One to three words, no digits, not an amount,
+   date, email or account number, and positioned like a label — immediately left
+   of or above a value. Body text and values never qualify.
+2. **Hashed until it's common.** A token that hasn't been reported by at least
+   **k customers** (start with k = 5) is stored only as a hash and a count. The
+   centre can count agreement without ever holding the string.
+3. **Kept in the clear only once k customers have independently reported it.**
+   At that point it is, by definition, a phrase printed on many companies'
+   invoice forms — not something belonging to any one customer.
+
+This is the same reasoning as the rest of the privacy contract, applied one
+level down: the centre gets to learn what the language of invoices looks like,
+and never gets to hold a phrase only one customer has ever seen.
 
 ## Matching: one V-tal is not one layout
 
@@ -141,11 +187,11 @@ true, and checkable.
 | Sent to the centre | Never sent |
 | --- | --- |
 | Vendor identifier (V-tal) — a business registration number | The PDF itself, in whole or in part |
-| Label text as printed on the supplier's form (`"Fakturanr"`) | Any field **value**: amounts, dates, invoice numbers, account numbers |
+| Label-shaped tokens, hashed — in the clear only once k customers have reported the same one | Any field **value**: amounts, dates, invoice numbers, account numbers |
 | Normalised label and region positions | Line items, in any form |
-| Canonical field each label maps to, and its type | The customer's identity, or which customer contributed |
+| Which field a label maps to (when known), and its type | The customer's identity, or which customer contributed |
 | Layout fingerprint hash | File names, folder paths |
-| A count of corroborating observations | Anything typed by a person into the studio as free text |
+| How many customers have seen the same thing | Anything typed by a person into the studio as free text |
 
 The principle: **the centre learns the shape of a supplier's form, never the
 contents of anyone's invoice.** A supplier's blank form is not personal data and
@@ -173,7 +219,7 @@ customers; we never send, store or share the contents of your invoices.*
 contributing still receives published templates. This is deliberate: it removes
 the only real objection during procurement, and it costs nothing — serving a
 template that already exists has no marginal cost, while an opt-out customer
-still generates the corroborations that make the brain trustworthy. Reciprocity
+still generates the agreement that makes the brain trustworthy. Reciprocity
 sounds fair and would buy nothing.
 
 ## Identity
@@ -186,8 +232,9 @@ registered centrally and activated by an admin, and every sync request carries a
 short-lived token signed with the private key. Revoking a site is flipping one
 row.
 
-Corroboration counts distinct **active** site fingerprints, which is what stops
-one actor manufacturing agreement with itself.
+Agreement is counted per **customer**, not per installation — a customer with
+three servers still has one voice — and only active, enrolled sites can push at
+all. Together that stops anyone manufacturing agreement with themselves.
 
 ## When it can't be read at all
 
@@ -203,6 +250,64 @@ it. Mapping it produces a candidate mapping like any other, and if it's a
 supplier nobody has taught, that one act of human attention is what the rest of
 the network eventually receives.
 
+## Recommended order of implementation
+
+Sequenced so that each stage is useful on its own, the risky parts come after
+the safe parts, and nothing publishes before there's evidence it should.
+
+**Stage A — make it work for one customer, with no brain at all.**
+The first municipality can be sold and served before any of this sharing
+exists. `app/workflow.py` already reads a folder, tracks status per document
+and reprocesses only what isn't done; what's missing is that the importable
+file is buried inside the result sidecar instead of being written to an outbox,
+that nothing runs it on a schedule, and that nobody is told when a document
+needs a human. Finish that loop first — outbox files, scheduled run, give-up
+rule, responsible user, notification. Until it exists there is no product to
+sell; after it exists, everything below only makes it cheaper to run.
+
+**Stage B — harvest locally, publish nothing.**
+Have the parser emit every label-shaped token and its position on each read,
+plus the layout fingerprint, and store both in the site's own database. No
+network. This is safe by construction, it immediately improves local field
+suggestions, and it produces the data every later stage depends on. It also
+lets you look at real harvests and tune the token rules before any of it
+leaves a customer's machine.
+
+**Stage C — the trust plane.**
+Stand up `central/` with site enrollment and signed requests (M2), and one
+authenticated endpoint that accepts observations and does nothing with them.
+Get identity working while it carries nothing valuable. A brain anyone can push
+into is not worth building.
+
+**Stage D — accumulate, still publishing nothing.**
+Sites push label observations and fingerprints on the schedule. The centre
+counts. Nothing flows back yet, so nothing can break a customer's reads. Run it
+long enough to answer the empirical questions: how many customers does it take
+before a label crosses k, how often do two customers actually agree on a
+supplier, is the threshold of two right for a country this size.
+
+**Stage E — publish the vocabulary.**
+Push the learned label vocabulary back to sites. This is the highest value for
+the lowest blast radius: a synonym list improves the cold-start case for
+suppliers nobody has seen, and a wrong entry degrades a guess rather than
+corrupting a specific supplier's template. It is also the stage that proves the
+round trip end to end while the stakes are still low.
+
+**Stage F — publish templates.**
+Per-vendor mappings, with the complete-and-reconciles gate and the two-customer
+agreement rule. This is the one that can hand a confident error to everyone, so
+it goes last of the publishing stages, on top of machinery already proven by E.
+
+**Stage G — keep it honest.**
+Withdrawal, driven by export history: watch published templates for reads that
+stop reconciling across customers, and pull them automatically. Without this the
+brain only ever accumulates, including its mistakes.
+
+A useful property of this order: you can stop after any stage and still have
+something coherent. Stop after A and you have a working single-customer product.
+Stop after E and you have a product that gets better for everyone without ever
+risking one customer's numbers on another's mistake.
+
 ## Where the code already stands
 
 | Piece | State |
@@ -213,11 +318,13 @@ the network eventually receives.
 | Validation signals for the promotion gate | `app/validation.py` |
 | Per-read record of template-vs-heuristic and validity | `export_records` |
 | Template history and rollback | `vendor_template_versions` |
-| Folder in, review loop, reprocess | `app/workflow.py` |
+| Folder in, review loop, reprocess | `app/workflow.py` — but no outbox, schedule or notification |
 | **Central service and its API** | not built |
 | **Site identity and enrollment** | not built |
 | **Layout fingerprints** | not built |
-| **Promotion, corroboration, retirement** | not built |
+| **Harvesting all label-shaped tokens** | not built — the parser finds them, but only keeps what it can map |
+| **Learned label vocabulary** | partly — `labels.yaml` and `OutputField.aliases` exist, but are maintained by hand |
+| **Counting agreement, publishing, withdrawing** | not built |
 | **Scheduled pull/push, give-up rule, notification** | not built |
 
 The bottom half is the work. The top half is most of the hard thinking already
@@ -225,15 +332,17 @@ done.
 
 ## Open questions
 
-1. **Corroboration threshold.** Two independent sites, or three? Two is fast and
-   probably right while the customer base is small; it can be raised later
-   without changing anything else.
-2. **Auto-publish on corroboration, or always a human?** Auto-publish is what
-   makes the network self-sustaining; a review queue is safer but makes you the
-   bottleneck for every new supplier in the country.
-3. **Does the hosted service count as one site or many?** Treating it as a single
-   privileged site is simplest, but then two hosted customers agreeing counts as
-   one corroboration.
-4. **Retry budget before escalation** — attempts, elapsed days, or both.
-5. **Who is the responsible user?** Per folder, per customer, or per supplier —
+Two of the original five are now decided and written up above: publishing is
+automatic on agreement with no human in the path, and a customer counts once
+however they run. What's left:
+
+1. **Agreement threshold.** Two customers, or three? Two is written above and is
+   probably right while the customer base is small — in a country this size a
+   third customer for the same supplier may be a long wait. It can be raised
+   later without changing anything else.
+2. **Retry budget before escalation** — attempts, elapsed days, or both.
+3. **Who is the responsible user?** Per folder, per customer, or per supplier —
    this decides the shape of the notification settings.
+4. **How long are label observations kept below the retention threshold?** They
+   are hashes and counts, so the cost is small, but "forever" is rarely the
+   right answer to write in a privacy policy.
