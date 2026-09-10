@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 import re
 
 from pydantic import BaseModel, Field as PydField, field_validator
@@ -340,7 +341,10 @@ async def export_invoice(
     if len(data) > _MAX_BYTES:
         raise HTTPException(413, "File too large (max 10 MB).")
     try:
-        document = loader.load(data)
+        # Parsing (and OCR on scans) is CPU-bound and can run for seconds. The
+        # service runs a single uvicorn worker, so doing this on the event loop
+        # would stall every other customer's request until it finished.
+        document = await run_in_threadpool(loader.load, data)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
