@@ -120,6 +120,8 @@ export interface TokenResponse {
 export interface Me {
   id: number;
   email: string;
+  /** Staff maintain the shared vendor templates; customers never see them. */
+  is_staff: boolean;
 }
 
 export interface CanonicalField {

@@ -64,6 +64,7 @@ class TokenOut(BaseModel):
 class MeOut(BaseModel):
     id: int
     email: str
+    is_staff: bool
 
 
 class ProfileFieldIn(BaseModel):
@@ -126,7 +127,7 @@ def login(body: Credentials, session: Session = Depends(get_session)) -> TokenOu
 
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(auth.current_user)) -> MeOut:
-    return MeOut(id=user.id, email=user.email)
+    return MeOut(id=user.id, email=user.email, is_staff=user.is_staff)
 
 
 # --- Canonical vocabulary (for building a profile in the UI) ---------------

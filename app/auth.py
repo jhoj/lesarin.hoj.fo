@@ -129,6 +129,20 @@ def create_user(session: Session, email: str, password: str) -> User:
     return user
 
 
+def set_staff(session: Session, email: str, staff: bool = True) -> Optional[User]:
+    """Promote or demote an account. Returns None if there's no such account.
+
+    Staff status is deliberately not self-service — there's no endpoint for it.
+    It's granted from the server with ``scripts/make_staff.py``.
+    """
+    user = get_user_by_email(session, email)
+    if user is None:
+        return None
+    user.is_staff = staff
+    session.commit()
+    return user
+
+
 def authenticate(session: Session, email: str, password: str) -> Optional[User]:
     user = get_user_by_email(session, email)
     if user is None or not verify_password(password, user.password_hash):
@@ -166,3 +180,16 @@ def optional_user(
     token = _bearer(authorization)
     uid = parse_token(token) if token else None
     return session.get(User, uid) if uid else None
+
+
+def current_staff(user: User = Depends(current_user)) -> User:
+    """Guards the shared vendor knowledge.
+
+    Vendor templates and the output-field vocabulary are global: one edit
+    changes what every customer's extraction returns. Only staff may touch
+    them. A customer hitting these gets 403, not 404 — the endpoints aren't a
+    secret, they're simply not theirs.
+    """
+    if not user.is_staff:
+        raise HTTPException(403, "This area is for Lesarin staff.")
+    return user

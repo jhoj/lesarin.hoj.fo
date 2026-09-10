@@ -53,6 +53,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(default=_now)
+    # Staff operate the shared vendor knowledge in the studio. Customers never
+    # do — a template edit changes what every other customer's extraction
+    # returns, so this is the line between the two audiences.
+    is_staff: Mapped[bool] = mapped_column(default=False)
 
     profiles: Mapped[List["OutputProfile"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", order_by="OutputProfile.id"

@@ -230,8 +230,17 @@ audiences, as routed views behind a login:
 
 - **`/app`** (customer) — register/log in, build output profiles by ticking
   fields and renaming them, then drag in a PDF and download the result.
-- **`/studio`** (mapping) — the vendor-template editor (PDF viewer + drag-box
-  wizard) for teaching the central mappings.
+- **`/studio`** (mapping, **staff only**) — the vendor-template editor (PDF
+  viewer + drag-box wizard) for teaching the central mappings.
+
+Vendor templates are shared: teaching one changes what *every* customer's
+extraction returns. So the studio and the `/api` endpoints behind it are
+restricted to staff accounts, and customers never see them. Promote an account
+from the server after it has registered:
+
+```bash
+python scripts/make_staff.py me@firm.fo      # --revoke to undo, --list to check
+```
 
 ```bash
 cd frontend && npm install && npm start   # dev: http://localhost:4200
