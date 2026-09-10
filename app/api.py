@@ -11,6 +11,7 @@ Flow it supports:
 
 from __future__ import annotations
 
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
@@ -40,6 +41,7 @@ from .models import (
 from . import repo
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("lesarin.studio")
 
 _MAX_BYTES = 10 * 1024 * 1024
 _CONFIG = field_extractor.load_config()
@@ -75,6 +77,7 @@ def _parse_upload(data: bytes) -> loader.Document:
     try:
         return loader.load(data)
     except Exception as exc:  # noqa: BLE001
+        logger.warning("upload: could not read PDF (%d bytes): %s", len(data), exc)
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
 

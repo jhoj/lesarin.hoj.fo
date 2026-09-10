@@ -119,6 +119,32 @@ sudo systemctl status 'actions.runner.*'        # is the runner service up?
 If a deploy job sits queued forever, the runner is offline — check the last
 line above, or the Runners page in repo settings.
 
+### Reading the logs
+
+The app logs to stdout, so journald has everything. Level comes from
+`LESARIN_LOG_LEVEL` in `/etc/lesarin/lesarin.env` (default `INFO`).
+
+Every export leaves one line saying how the read went — reach for it when a
+customer asks why an export looked wrong:
+
+```
+lesarin.saas: export user=7 file='faktura.pdf' vendor=314188 source=template \
+              located=6/10 ocr=False fmt=oioubl valid=False problems=2 ms=812
+```
+
+`source` is `template` (a taught vendor mapping was applied), `heuristic` (no
+mapping matched, best-effort read) or `none`. Changes to the shared brain are
+logged too — `vendor created` / `vendor updated` / `vendor deleted`, the last
+as a warning since it costs every customer that vendor's mappings:
+
+```bash
+sudo journalctl -u lesarin | grep 'lesarin.repo'     # who changed which template
+sudo journalctl -u lesarin -p warning                # parse failures + deletions
+```
+
+Log lines carry metadata only — never passwords, tokens, API keys, or any
+document content.
+
 ## Scaling past SQLite
 
 The unit runs a single uvicorn worker, which keeps SQLite write-contention-free
