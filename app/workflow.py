@@ -27,8 +27,12 @@ Exit codes match the CLI's convention: 0 when every document is complete,
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import math
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -46,9 +50,39 @@ def read_sidecar(pdf: Path) -> Optional[dict]:
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        report = json.loads(path.read_text(encoding="utf-8"))
+        return report if isinstance(report, dict) else None
+    except (OSError, ValueError):
         return None
+
+
+def write_sidecar(pdf: Path, report: dict) -> None:
+    """Publish a whole result so a scheduler/exporter never sees half a write."""
+    path = sidecar_for(pdf)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".lesarin-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(report, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _retry_policy(config: dict) -> tuple:
+    retry = config.get("retry", {})
+    if not isinstance(retry, dict) or retry.keys() - {"max_attempts", "max_days"}:
+        raise ValueError("retry must be an object with max_attempts and/or max_days")
+    attempts, days = retry.get("max_attempts"), retry.get("max_days")
+    if attempts is not None and (type(attempts) is not int or attempts < 1):
+        raise ValueError("retry.max_attempts must be a positive integer")
+    if days is not None and (type(days) not in (int, float) or not math.isfinite(days) or days <= 0):
+        raise ValueError("retry.max_days must be a positive finite number")
+    return attempts, days
 
 
 def process_folder(
@@ -57,37 +91,74 @@ def process_folder(
     fmt_override: Optional[str] = None,
     require_override: Optional[List[str]] = None,
     only_pending: bool = True,
+    retry_attention: bool = False,
 ) -> dict:
     """Read every PDF in the folder, leaving a result sidecar beside each.
 
     ``only_pending`` (the default) skips documents whose sidecar already says
     *complete* — that's what makes re-running after a studio correction cheap:
-    only the documents that still need work are re-read.
+    only the documents that still need work are re-read. Exhausted documents
+    stay at *needs-attention* until ``retry_attention`` or a forced re-read
+    explicitly starts a fresh retry budget.
     """
+    max_attempts, max_days = _retry_policy(config)
     pdfs = sorted(p for p in folder.glob("*.pdf") if p.is_file())
     summary = {"processed": 0, "skipped": 0, "complete": 0, "incomplete": 0, "failed": 0,
-               "documents": []}
+               "needs-attention": 0, "documents": []}
 
     for pdf in pdfs:
         existing = read_sidecar(pdf)
-        if only_pending and existing is not None and existing.get("status") == "complete":
+        status = existing.get("status") if existing else None
+        if only_pending and (status == "complete" or (status == "needs-attention" and not retry_attention)):
             summary["skipped"] += 1
-            summary["complete"] += 1
-            summary["documents"].append({"file": pdf.name, "status": "complete", "skipped": True})
+            summary[status] += 1
+            summary["documents"].append({"file": pdf.name, "status": status, "skipped": True})
             continue
 
-        report, _code = cli.run(str(pdf), config, fmt_override=fmt_override,
-                                require_override=require_override)
-        sidecar_for(pdf).write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        now = datetime.now(timezone.utc)
+        state = existing.get("workflow", {}) if existing and only_pending else {}
+        if status == "needs-attention" and retry_attention:
+            state = {}
+        if not isinstance(state, dict):
+            raise ValueError(f"invalid retry history: {pdf.name}")
+        state = dict(state)
+        attempts = state.get("attempts", 0)
+        try:
+            first = datetime.fromisoformat(state["first_attempt_at"]) if state else now
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid retry history: {pdf.name}") from exc
+        if type(attempts) is not int or attempts < 0 or first.tzinfo is None:
+            raise ValueError(f"invalid retry history: {pdf.name}")
+        age_days = (now - first).total_seconds() / 86400
+        exhausted = (max_attempts is not None and attempts >= max_attempts) or (
+            max_days is not None and age_days >= max_days
         )
-        summary["processed"] += 1
+        if existing and exhausted:
+            report = dict(existing)
+            summary["skipped"] += 1
+        else:
+            report, _code = cli.run(str(pdf), config, fmt_override=fmt_override,
+                                    require_override=require_override)
+            attempts += 1
+            state.update(attempts=attempts, first_attempt_at=first.isoformat(),
+                         last_attempt_at=now.isoformat(), last_status=report["status"])
+            summary["processed"] += 1
+        if report["status"] != "complete":
+            if max_attempts is not None and attempts >= max_attempts:
+                state["attention_reason"] = f"retry limit reached ({max_attempts} attempts)"
+            elif max_days is not None and age_days >= max_days:
+                state["attention_reason"] = f"retry age reached ({max_days} days)"
+            if state.get("attention_reason"):
+                report["status"] = "needs-attention"
+        report["workflow"] = state
+        write_sidecar(pdf, report)
         summary[report["status"]] += 1
         summary["documents"].append({
             "file": pdf.name,
             "status": report["status"],
             "mapped": report.get("mapped", False),
             "missing": report.get("missing_fields", []),
+            "workflow": state,
         })
 
     return summary
@@ -108,6 +179,7 @@ def queue_status(folder: Path) -> dict:
             "vendor": (report.get("vendor") or {}).get("name"),
             "missing": report.get("missing_fields", []),
             "valid": (report.get("validation") or {}).get("valid"),
+            "workflow": report.get("workflow", {}),
         })
     counts: dict = {}
     for d in docs:
@@ -118,7 +190,7 @@ def queue_status(folder: Path) -> dict:
 def _exit_code(counts: dict) -> int:
     if counts.get("failed"):
         return 1
-    if counts.get("incomplete") or counts.get("unprocessed"):
+    if counts.get("incomplete") or counts.get("unprocessed") or counts.get("needs-attention"):
         return 2
     return 0
 
@@ -138,6 +210,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_proc.add_argument("--require", help="comma-separated fields required for 'complete'")
     p_proc.add_argument("--all", action="store_true",
                         help="re-read every document, including already-complete ones")
+    p_proc.add_argument("--retry-attention", action="store_true",
+                        help="give needs-attention documents a fresh retry budget")
 
     p_stat = sub.add_parser("status", help="summarise the folder's sidecars")
     p_stat.add_argument("folder")
@@ -156,27 +230,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(note, file=sys.stderr)
         return _exit_code(result["counts"])
 
-    # process
-    from .db import init_db, use_database
-
-    if args.db:
-        use_database(args.db)
-    init_db()
-
     try:
         config = cli.load_config(args.config)
+        _retry_policy(config)
     except (OSError, ValueError) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 1
 
+    from .db import init_db, use_database
+
+    database = args.db or config.get("db")
+    if database:
+        use_database(database)
+    init_db()
+
     require = [s.strip() for s in args.require.split(",") if s.strip()] if args.require else None
-    summary = process_folder(folder, config, fmt_override=args.fmt,
-                             require_override=require, only_pending=not args.all)
+    try:
+        summary = process_folder(folder, config, fmt_override=args.fmt,
+                                 require_override=require, only_pending=not args.all,
+                                 retry_attention=args.retry_attention)
+    except (OSError, ValueError) as exc:
+        print(f"workflow error: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(
         f"processed {summary['processed']}, skipped {summary['skipped']} — "
         f"{summary['complete']} complete, {summary['incomplete']} incomplete, "
-        f"{summary['failed']} failed",
+        f"{summary['failed']} failed, {summary['needs-attention']} need attention",
         file=sys.stderr,
     )
     return _exit_code(summary)

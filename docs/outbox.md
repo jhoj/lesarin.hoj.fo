@@ -72,10 +72,11 @@ This continuation is intentionally limited to three new files: `app/outbox.py`,
 `tests/test_outbox.py`, and this guide. It does not modify the in-progress central,
 site-agent, validation, database, CLI, or frontend implementations.
 
-Stage A still needs durable delivery acknowledgements for consuming integrations,
-scheduled processing, a retry/time budget, responsible-user configuration, and
-notification. This command can be called after processing as a separate step;
-it does not claim those remaining parts are implemented.
+The [workflow automation guide](workflow-automation.md) describes the implemented
+retry/time budget and explicit retry after human review. Stage A still needs
+durable delivery acknowledgements for consuming integrations, scheduled processing,
+responsible-user configuration, and notification. This command can be called
+after processing as a separate step.
 
 Verification:
 
