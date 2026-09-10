@@ -369,11 +369,25 @@ async def export_invoice(
     # Machine-readable read quality, so automation callers can branch without
     # parsing the body: how the read was made and whether the numbers held up.
     check = validation.validate(extraction.values(), extraction.lines)
+    # Measured against what the customer actually asked for, not against what
+    # the engine happened to attempt — a field the reader never even tried for
+    # is still an empty value in their file, and they need to know about it.
+    requested = (
+        [f["canonical"] for f in profile_fields] if profile_fields else list(canonical.CANONICAL_ORDER)
+    )
+    found = extraction.values()
+    missing = [key for key in requested if found.get(key) in (None, "")]
     headers = {
         "Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"',
         "X-Lesarin-Source": extraction.source,          # template | heuristic | none
         "X-Lesarin-Valid": "true" if check["valid"] else "false",
         "X-Lesarin-Problems": str(len(check["problems"])),
+        # How much of the requested output was located, and precisely what was
+        # not — so a caller (or the UI) can say "check these two fields"
+        # instead of silently handing over a form with empty values.
+        "X-Lesarin-Located": f"{len(requested) - len(missing)}/{len(requested)}",
+        "X-Lesarin-Missing": ",".join(missing),
+        "X-Lesarin-Vendor": extraction.vendor.name if extraction.vendor else "",
     }
     # The line to reach for when a customer asks why an export looked wrong:
     # which vendor was recognised, whether a template or the heuristics did the
