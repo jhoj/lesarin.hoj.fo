@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -85,6 +86,60 @@ def _retry_policy(config: dict) -> tuple:
     return attempts, days
 
 
+def _responsible_email(config: dict) -> Optional[str]:
+    recipient = config.get("responsible_email")
+    if recipient is not None and (
+        not isinstance(recipient, str) or not re.fullmatch(r"[^\s@,<>]+@[^\s@,<>]+", recipient)
+    ):
+        raise ValueError("responsible_email must be a single email address")
+    return recipient
+
+
+def _notify_attention(documents: list, recipient: Optional[str]) -> dict:
+    """Send one digest; only SMTP success earns a persisted notification receipt."""
+    from . import mailer
+
+    pending = [(pdf, report) for pdf, report in documents
+               if (report.get("workflow", {}).get("notification") or {}).get("to") != recipient
+               or not recipient]
+    result = {"sent": 0, "pending": len(pending), "failed": 0}
+    if not pending or not recipient:
+        return result
+
+    body = ["These documents need human review. Automatic reads have stopped.", ""]
+    for pdf, report in pending:
+        state = report.get("workflow", {})
+        found = sorted(key for key, field in report.get("fields", {}).items() if field.get("found"))
+        body.extend([
+            f"File: {pdf.name} (inbox: {pdf.parent})",
+            f"Attempts: {state.get('attempts', 'unknown')}",
+            f"Escalation: {state.get('attention_reason', 'needs attention')}",
+            f"Located fields: {', '.join(found) or 'none'}",
+            f"Missing fields: {', '.join(report.get('missing_fields', [])) or 'see result sidecar'}",
+            "",
+        ])
+    body.extend([
+        f"Review and correct mappings: {mailer.base_url()}/studio",
+        "Sign in with a staff account and upload the named PDF to the studio.",
+        "After saving the mapping, ask the operator to run process with --retry-attention.",
+        "Invoice values and attachments are not included in this notification.",
+    ])
+    try:
+        delivered = mailer.send(recipient, "Lesarin: documents need attention", "\n".join(body))
+    except (OSError, ValueError):
+        # Invalid SMTP environment settings can fail before mailer's send guard.
+        delivered = False
+    if not delivered:
+        result["failed"] = len(pending)
+        return result
+    for pdf, report in pending:
+        report.setdefault("workflow", {})["notification"] = {
+            "to": recipient, "sent_at": datetime.now(timezone.utc).isoformat(),
+        }
+        write_sidecar(pdf, report)
+    return {"sent": len(pending), "pending": 0, "failed": 0}
+
+
 def process_folder(
     folder: Path,
     config: dict,
@@ -102,9 +157,11 @@ def process_folder(
     explicitly starts a fresh retry budget.
     """
     max_attempts, max_days = _retry_policy(config)
+    recipient = _responsible_email(config)
     pdfs = sorted(p for p in folder.glob("*.pdf") if p.is_file())
     summary = {"processed": 0, "skipped": 0, "complete": 0, "incomplete": 0, "failed": 0,
                "needs-attention": 0, "documents": []}
+    attention = []
 
     for pdf in pdfs:
         existing = read_sidecar(pdf)
@@ -113,6 +170,8 @@ def process_folder(
             summary["skipped"] += 1
             summary[status] += 1
             summary["documents"].append({"file": pdf.name, "status": status, "skipped": True})
+            if status == "needs-attention":
+                attention.append((pdf, existing))
             continue
 
         now = datetime.now(timezone.utc)
@@ -152,6 +211,8 @@ def process_folder(
                 report["status"] = "needs-attention"
         report["workflow"] = state
         write_sidecar(pdf, report)
+        if report["status"] == "needs-attention":
+            attention.append((pdf, report))
         summary[report["status"]] += 1
         summary["documents"].append({
             "file": pdf.name,
@@ -161,6 +222,7 @@ def process_folder(
             "workflow": state,
         })
 
+    summary["notifications"] = _notify_attention(attention, recipient)
     return summary
 
 
@@ -188,7 +250,7 @@ def queue_status(folder: Path) -> dict:
 
 
 def _exit_code(counts: dict) -> int:
-    if counts.get("failed"):
+    if counts.get("failed") or counts.get("notifications", {}).get("failed"):
         return 1
     if counts.get("incomplete") or counts.get("unprocessed") or counts.get("needs-attention"):
         return 2
@@ -233,6 +295,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         config = cli.load_config(args.config)
         _retry_policy(config)
+        _responsible_email(config)
     except (OSError, ValueError) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 1
@@ -256,7 +319,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(
         f"processed {summary['processed']}, skipped {summary['skipped']} — "
         f"{summary['complete']} complete, {summary['incomplete']} incomplete, "
-        f"{summary['failed']} failed, {summary['needs-attention']} need attention",
+        f"{summary['failed']} failed, {summary['needs-attention']} need attention; "
+        f"notifications: {summary['notifications']['sent']} sent, "
+        f"{summary['notifications']['pending']} pending, {summary['notifications']['failed']} failed",
         file=sys.stderr,
     )
     return _exit_code(summary)

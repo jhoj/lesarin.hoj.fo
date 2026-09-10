@@ -54,10 +54,48 @@ documents. Ordinary pending documents continue their current budget. The existin
 as they do for incomplete results. Unescalated read failures still return `1`.
 The [outbox command](outbox.md) never exports a `needs-attention` result.
 
+## Responsible User
+
+Add a single email address to the job configuration:
+
+```yaml
+responsible_email: accounts@example.fo
+```
+
+Set `LESARIN_SMTP_HOST`, `LESARIN_SMTP_PORT` (default `587`),
+`LESARIN_SMTP_USER`, `LESARIN_SMTP_PASSWORD`, `LESARIN_MAIL_FROM`, and
+`LESARIN_BASE_URL` in the process environment. The existing mailer uses STARTTLS
+by default; set `LESARIN_SMTP_STARTTLS=false` only for an appropriate local relay.
+The base URL must point at this site's web app, not the central brain service.
+
+After processing, one email digest lists unnotified `needs-attention` documents,
+their attempt counts, escalation reasons, and located/missing field names. It
+links to `/studio`, where a staff user can upload the named PDF and correct its
+mapping. These local PDFs are not automatically uploaded to the web app, so the
+link opens the studio, not a preloaded document. No extracted invoice values or
+PDF attachments are sent, but filenames and inbox paths are included; choose an
+authorized responsible user.
+
+On SMTP success, each sidecar records `workflow.notification.to` and `sent_at`.
+Further runs do not resend that escalation to the same recipient. If sending
+fails, the notification remains pending and is retried on the next run without
+another invoice read. A changed recipient or explicit retry/new escalation can
+produce a new notification. With no SMTP host, the existing mailer logs the
+message instead; this is **not** recorded as successful delivery.
+
+The processing summary includes notification `sent`, `pending`, and `failed`
+document counts. Notification failures make `process` exit `1`; successful
+notifications do not remove `needs-attention`, so the queue still exits `2`.
+Without `responsible_email`, sending is disabled and pending notifications alone
+do not cause exit `1`.
+
+SMTP acceptance is not a guarantee that a person read the message. A crash after
+SMTP acceptance but before saving the receipt can cause a duplicate notification;
+this favors notifying twice over silently losing the alert.
+
 ## Remaining Work
 
-Responsible-user notification and scheduled execution are separate follow-up
-steps. Until scheduling is installed, run the commands manually and serialize
-runs for each inbox. Retry budgets do not themselves provide delivery
+Scheduled execution is a separate follow-up step. Until scheduling is installed,
+run the commands manually and serialize runs for each inbox. Retry budgets do not themselves provide delivery
 acknowledgements or prevent a consumer from importing the same invoice twice;
 see the outbox guide's delivery semantics before automating imports.
