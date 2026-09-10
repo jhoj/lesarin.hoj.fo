@@ -84,6 +84,16 @@ export class Api {
     return firstValueFrom(this.http.post<TokenResponse>(`${BASE}/auth/login`, { email, password }));
   }
 
+  forgotPassword(email: string): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${BASE}/auth/forgot-password`, { email }));
+  }
+
+  resetPassword(token: string, password: string): Promise<TokenResponse> {
+    return firstValueFrom(
+      this.http.post<TokenResponse>(`${BASE}/auth/reset-password`, { token, password }),
+    );
+  }
+
   me(): Promise<Me> {
     return firstValueFrom(this.http.get<Me>(`${BASE}/me`));
   }

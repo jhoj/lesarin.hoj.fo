@@ -63,6 +63,24 @@ class User(Base):
     )
 
 
+class PasswordResetToken(Base):
+    """A one-time, short-lived ticket to set a new password.
+
+    Only the hash is stored: a leaked database must not hand out working reset
+    links. Rows are kept after use so a token can never be replayed, and so
+    "this reset was already used" is distinguishable from "no such token".
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    expires_at: Mapped[datetime] = mapped_column()
+    used_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+
+
 class OutputProfile(Base):
     """A customer's desired output shape: a named set of renamed canonical
     fields plus the export format (json | xml | ubl | oioubl)."""

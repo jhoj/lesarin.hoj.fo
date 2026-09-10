@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, engine, exporters, repo, validation
+from . import auth, canonical, engine, exporters, mailer, repo, validation
 from .db import get_session
 from .db_models import ExportRecord, OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
@@ -57,6 +57,15 @@ class Credentials(BaseModel):
         if not _EMAIL_RE.match(v):
             raise ValueError("Enter a valid email address.")
         return v
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    password: str = PydField(min_length=8)
 
 
 class TokenOut(BaseModel):
@@ -142,6 +151,36 @@ def login(body: Credentials, session: Session = Depends(get_session)) -> TokenOu
     user = auth.authenticate(session, body.email, body.password)
     if user is None:
         raise HTTPException(401, "Wrong email or password.")
+    return TokenOut(token=auth.make_token(user.id), email=user.email)
+
+
+@router.post("/auth/forgot-password")
+def forgot_password(body: ForgotPasswordIn, session: Session = Depends(get_session)) -> dict:
+    """Email a reset link, if that address has an account.
+
+    Always answers the same way. Saying "no such account" here would turn this
+    endpoint into a way to find out who has one.
+    """
+    user = auth.get_user_by_email(session, body.email)
+    if user is not None:
+        token = auth.create_reset_token(session, user)
+        link = f"{mailer.base_url()}/reset-password?token={token}"
+        mailer.send(
+            user.email,
+            "Reset your Lesarin password",
+            "Someone asked to reset the password for this Lesarin account.\n\n"
+            f"To choose a new one, open:\n{link}\n\n"
+            "The link works once and expires in an hour. If this wasn't you, "
+            "you can ignore this message — nothing has changed.\n",
+        )
+    return {"sent": True}
+
+
+@router.post("/auth/reset-password", response_model=TokenOut)
+def reset_password(body: ResetPasswordIn, session: Session = Depends(get_session)) -> TokenOut:
+    user = auth.redeem_reset_token(session, body.token, body.password)
+    if user is None:
+        raise HTTPException(400, "That reset link is invalid, already used, or expired.")
     return TokenOut(token=auth.make_token(user.id), email=user.email)
 
 

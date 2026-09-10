@@ -198,6 +198,7 @@ time too.
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/auth/register` · `POST /api/auth/login` | email + password → bearer token |
+| `POST /api/auth/forgot-password` · `POST /api/auth/reset-password` | email a one-time reset link, then set a new password |
 | `GET /api/me` | the current account |
 | `GET /api/canonical-fields` | the fields you can put in a profile |
 | `GET/POST/PUT/DELETE /api/me/profiles[...]` | manage output profiles |
