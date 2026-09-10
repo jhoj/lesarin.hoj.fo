@@ -16,6 +16,7 @@ guesses.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import datetime, timezone
 from typing import List
@@ -23,7 +24,7 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import LabelObservation, Site, TemplateOutcome, VendorTemplate
+from .models import LabelObservation, OutputNamePreset, Site, TemplateOutcome, VendorTemplate
 
 BUNDLE_VERSION = 1  # matches app.brain.BRAIN_BUNDLE_VERSION
 
@@ -119,6 +120,47 @@ def _merge_label_observations(session: Session, site: Site, observations: List[d
     return newly_revealed
 
 
+def _output_name_hash(canonical: str, output_name: str) -> str:
+    return hashlib.sha256(f"{canonical}\x00{output_name}".encode("utf-8")).hexdigest()
+
+
+def _merge_output_name_presets(session: Session, site: Site, observations: List[dict]) -> int:
+    """Count each distinct (canonical, output_name) pairing this site
+    reports, hashed so the name itself is never held before ``k`` sites
+    independently report the same one. Returns how many pairings just
+    crossed the threshold."""
+    newly_revealed = 0
+    k = _vocab_k()
+    seen_this_push = set()
+    for obs in observations:
+        canonical = (obs.get("canonical") or "").strip()
+        name = (obs.get("output_name") or "").strip()
+        if not canonical or not name or (canonical, name) in seen_this_push:
+            continue
+        seen_this_push.add((canonical, name))
+
+        name_hash = _output_name_hash(canonical, name)
+        row = session.scalar(
+            select(OutputNamePreset).where(
+                OutputNamePreset.canonical == canonical, OutputNamePreset.name_hash == name_hash
+            )
+        )
+        if row is None:
+            row = OutputNamePreset(canonical=canonical, name_hash=name_hash, fingerprints=[])
+            session.add(row)
+            session.flush()
+
+        fingerprints = set(row.contributing_fingerprints)
+        if site.fingerprint not in fingerprints:
+            fingerprints.add(site.fingerprint)
+            row.fingerprints = sorted(fingerprints)
+            if not row.revealed and len(fingerprints) >= k:
+                row.revealed = True
+                row.revealed_name = name
+                newly_revealed += 1
+    return newly_revealed
+
+
 def _merge_outcomes(session: Session, site: Site, outcomes: List[dict]) -> List[str]:
     """Upsert this site's latest valid/invalid snapshot for each vendor it
     reports on, then check whether the evidence *across all reporting sites*
@@ -181,6 +223,7 @@ def apply_push(session: Session, site: Site, bundle: dict) -> dict:
 
     results = [_merge_template(session, site, spec) for spec in bundle.get("confirmed_templates", [])]
     newly_revealed = _merge_label_observations(session, site, bundle.get("label_observations", []))
+    presets_revealed = _merge_output_name_presets(session, site, bundle.get("output_name_observations", []))
     auto_withdrawn = _merge_outcomes(session, site, bundle.get("template_outcomes", []))
     session.commit()
 
@@ -188,6 +231,7 @@ def apply_push(session: Session, site: Site, bundle: dict) -> dict:
         "templates_created": results.count("created"),
         "templates_replaced": results.count("replaced"),
         "vocabulary_revealed": newly_revealed,
+        "presets_revealed": presets_revealed,
         "auto_withdrawn": auto_withdrawn,
     }
 
@@ -212,4 +256,14 @@ def build_pull_bundle(session: Session) -> dict:
         by_key.setdefault(row.suggested_key, set()).add(row.label)
     vocabulary = [{"key": key, "aliases": sorted(aliases)} for key, aliases in by_key.items()]
 
-    return {"bundle_version": BUNDLE_VERSION, "templates": templates, "vocabulary": vocabulary}
+    presets_by_key: dict = {}
+    for row in session.scalars(select(OutputNamePreset).where(OutputNamePreset.revealed.is_(True))):
+        presets_by_key.setdefault(row.canonical, set()).add(row.revealed_name)
+    output_name_presets = [
+        {"key": key, "names": sorted(names)} for key, names in presets_by_key.items()
+    ]
+
+    return {
+        "bundle_version": BUNDLE_VERSION, "templates": templates, "vocabulary": vocabulary,
+        "output_name_presets": output_name_presets,
+    }

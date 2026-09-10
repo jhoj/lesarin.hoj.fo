@@ -129,6 +129,23 @@ def test_studio_saved_mappings_are_confirmed_and_pushable(client):
         assert tpl["mappings"][0]["output"] == "InvoiceNo"
 
 
+def test_push_bundle_includes_output_name_observations_from_profiles():
+    from app import auth
+    from app.db_models import OutputProfile, ProfileField
+
+    with SessionLocal() as session:
+        user = auth.create_user(session, "preset@x.com", "password12")
+        profile = OutputProfile(user_id=user.id, name="Default", fmt="json")
+        profile.fields = [ProfileField(canonical="InvoiceNo", output_name="Bilagsnr", sort_order=0)]
+        session.add(profile)
+        session.commit()
+
+        bundle = brain.export_push_bundle(session)
+        assert bundle["output_name_observations"] == [
+            {"canonical": "InvoiceNo", "output_name": "Bilagsnr"},
+        ]
+
+
 def test_merge_pull_bundle_adds_new_template_as_confirmed():
     incoming = {
         "bundle_version": brain.BRAIN_BUNDLE_VERSION,
@@ -161,6 +178,29 @@ def test_merge_pull_bundle_widens_local_aliases():
         assert stats["vocabulary_updated"] == 1
         field = next(f for f in repo.list_output_fields(session) if f.key == "InvoiceNo")
         assert set(field.aliases) == {"Fakturanr", "Invoice No", "Bilagsnr"}
+
+
+def test_merge_pull_bundle_widens_local_preset_names():
+    with SessionLocal() as session:
+        repo.upsert_output_field(session, "InvoiceNo", value_type="string")
+        stats = brain.merge_pull_bundle(session, {
+            "bundle_version": brain.BRAIN_BUNDLE_VERSION,
+            "templates": [], "vocabulary": [],
+            "output_name_presets": [{"key": "InvoiceNo", "names": ["Bilagsnr", "invoice_id"]}],
+        })
+        assert stats["presets_updated"] == 1
+        field = next(f for f in repo.list_output_fields(session) if f.key == "InvoiceNo")
+        assert set(field.preset_names) == {"Bilagsnr", "invoice_id"}
+
+
+def test_merge_pull_bundle_ignores_presets_for_unseeded_fields():
+    with SessionLocal() as session:
+        stats = brain.merge_pull_bundle(session, {
+            "bundle_version": brain.BRAIN_BUNDLE_VERSION,
+            "templates": [], "vocabulary": [],
+            "output_name_presets": [{"key": "NeverSeeded", "names": ["Whatever"]}],
+        })
+        assert stats["presets_updated"] == 0
 
 
 # --- app.brain: template outcomes (Stage G evidence) --------------------------

@@ -23,6 +23,14 @@
   text itself isn't confidential; the threshold here is a trust gate on the
   *pairing*, not string secrecy. Documented simplification vs. the stricter
   hash-until-k language in brain-sync.md's "Harvesting" section.)
+* ``OutputNamePreset`` — the second k-anonymity vocabulary
+  (docs/brain-sync.md "A third kind: what customers do with the data"): which
+  key customers rename a canonical field to, e.g. ``InvoiceNo`` → ``Bilagsnr``.
+  Unlike a label (already allowlisted against a known vocabulary before it's
+  ever harvested), an output name is genuinely free text a customer chose, so
+  this table holds only a hash and a count until ``k`` sites independently
+  report the identical name — at that point it's a convention, not a private
+  detail, and the plaintext is kept.
 * ``Admin`` — the back-office's own team accounts (site enrollment, manual
   template withdrawal, monitoring) — not a publishing gatekeeper.
 """
@@ -155,6 +163,32 @@ class LabelObservation(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     __table_args__ = (UniqueConstraint("label", "suggested_key", name="uq_label_observation"),)
+
+    @property
+    def contributing_fingerprints(self) -> List[str]:
+        return list(self.fingerprints or [])
+
+
+class OutputNamePreset(Base):
+    """One (canonical field, output name) pairing, counted across distinct
+    sites the same way as ``LabelObservation``. ``name_hash`` is
+    ``sha256(canonical + output_name)`` — the plaintext name is never stored
+    until ``revealed`` flips true, because unlike a label this string is
+    genuinely free text one customer chose and could itself identify them
+    (see the module docstring)."""
+
+    __tablename__ = "output_name_presets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical: Mapped[str] = mapped_column(String(64), index=True)
+    name_hash: Mapped[str] = mapped_column(String(64))
+    revealed_name: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    fingerprints: Mapped[list] = mapped_column(JSON, default=list)
+    revealed: Mapped[bool] = mapped_column(default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+
+    __table_args__ = (UniqueConstraint("canonical", "name_hash", name="uq_output_name_preset"),)
 
     @property
     def contributing_fingerprints(self) -> List[str]:

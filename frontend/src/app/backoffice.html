@@ -139,5 +139,26 @@
         }
       </ul>
     </section>
+
+    <!-- Output-name presets -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Output-name presets</h2>
+        <span class="muted small">A name is revealed once enough sites independently rename the same field to it.</span>
+      </div>
+      @if (outputNamePresets().length === 0) {
+        <p class="muted small">No output-name pairings observed yet.</p>
+      }
+      <ul class="vocab-list">
+        @for (p of outputNamePresets(); track p.canonical + (p.name ?? '')) {
+          <li>
+            <span class="name">{{ p.canonical }}</span>
+            <span class="v-id">{{ p.name ?? '(below threshold)' }}</span>
+            <span class="muted small">{{ p.sites }} site(s)</span>
+            <span class="badge" [class.lo]="!p.revealed">{{ p.revealed ? 'revealed' : 'pending' }}</span>
+          </li>
+        }
+      </ul>
+    </section>
   }
 </div>

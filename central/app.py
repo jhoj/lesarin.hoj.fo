@@ -33,7 +33,9 @@ from app import auth as human_auth
 
 from . import admin_auth, identity_verify, sync as central_sync
 from .db import get_session, init_db
-from .models import Admin, EnrollmentToken, LabelObservation, Site, TemplateOutcome, VendorTemplate
+from .models import (
+    Admin, EnrollmentToken, LabelObservation, OutputNamePreset, Site, TemplateOutcome, VendorTemplate,
+)
 from .trust import current_site
 
 
@@ -116,6 +118,13 @@ class TemplateOut(BaseModel):
 class VocabularyOut(BaseModel):
     label: str
     suggested_key: Optional[str] = None
+    sites: int
+    revealed: bool
+
+
+class OutputNamePresetOut(BaseModel):
+    canonical: str
+    name: Optional[str] = None  # withheld until revealed — central never held the plaintext before then
     sites: int
     revealed: bool
 
@@ -302,6 +311,24 @@ def list_vocabulary(
     return [
         VocabularyOut(
             label=r.label, suggested_key=r.suggested_key,
+            sites=len(r.contributing_fingerprints), revealed=r.revealed,
+        )
+        for r in rows
+    ]
+
+
+@app.get("/admin/output-name-presets", response_model=List[OutputNamePresetOut])
+def list_output_name_presets(
+    admin: Admin = Depends(admin_auth.current_admin), session: Session = Depends(get_session)
+) -> List[OutputNamePresetOut]:
+    """Every observed (canonical field, output name) pairing and how many
+    distinct sites have reported it — including ones still below the k
+    threshold, whose name isn't shown because central itself doesn't hold it
+    yet (only a hash)."""
+    rows = session.scalars(select(OutputNamePreset).order_by(OutputNamePreset.canonical))
+    return [
+        OutputNamePresetOut(
+            canonical=r.canonical, name=r.revealed_name if r.revealed else None,
             sites=len(r.contributing_fingerprints), revealed=r.revealed,
         )
         for r in rows

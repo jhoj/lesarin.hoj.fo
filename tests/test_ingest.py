@@ -54,7 +54,7 @@ def test_local_file_source_ingests_a_confirmed_bundle(tmp_path):
         results = ingest(session, LocalFileSource([path]), site)
         assert results == [{
             "templates_created": 1, "templates_replaced": 0, "vocabulary_revealed": 0,
-            "auto_withdrawn": [],
+            "presets_revealed": 0, "auto_withdrawn": [],
         }]
 
         template = session.query(VendorTemplate).filter_by(identifier="700100").one()

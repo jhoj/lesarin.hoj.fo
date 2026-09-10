@@ -11,6 +11,10 @@ central knowledge service:
   other,
 * **label observations** — the privacy-safe harvest queued by every read
   (``app.fingerprint`` / ``app.repo.add_label_observation``), never a value.
+* **output-name observations** — the (canonical field, customer's renamed
+  key) pairs already sitting in this site's own output profiles, e.g.
+  ``InvoiceNo`` → ``Bilagsnr``. A customer's own choice, never a document
+  value, so it's eligible on the same terms as a label.
 
 And merges back what central publishes: templates become local mappings
 (already confirmed — they crossed the wire because *someone* confirmed them),
@@ -101,11 +105,17 @@ def export_push_bundle(session: Session) -> dict:
         for obs in repo.list_label_observations(session)
     ]
 
+    output_name_observations = [
+        {"canonical": canonical, "output_name": output_name}
+        for canonical, output_name in repo.list_output_name_pairs(session)
+    ]
+
     return {
         "bundle_version": BRAIN_BUNDLE_VERSION,
         "confirmed_templates": templates,
         "label_observations": observations,
         "template_outcomes": outcomes,
+        "output_name_observations": output_name_observations,
     }
 
 
@@ -116,7 +126,7 @@ def merge_pull_bundle(session: Session, bundle: dict) -> dict:
     if bundle.get("bundle_version") != BRAIN_BUNDLE_VERSION:
         raise ValueError(f"unsupported brain bundle version: {bundle.get('bundle_version')!r}")
 
-    stats = {"templates_added": 0, "templates_updated": 0, "vocabulary_updated": 0}
+    stats = {"templates_added": 0, "templates_updated": 0, "vocabulary_updated": 0, "presets_updated": 0}
 
     for spec in bundle.get("templates", []):
         vendor = repo.get_vendor_by_identifier(
@@ -158,5 +168,18 @@ def merge_pull_bundle(session: Session, bundle: dict) -> dict:
                 value_type=existing.value_type, sort_order=existing.sort_order, aliases=merged,
             )
             stats["vocabulary_updated"] += 1
+
+    for spec in bundle.get("output_name_presets", []):
+        key, names = spec.get("key"), spec.get("names", [])
+        if not key or not names:
+            continue
+        existing = session.scalar(select(OutputField).where(OutputField.key == key))
+        if existing is None:
+            continue  # a canonical field this site hasn't seeded — nothing to suggest names for
+        merged = sorted(set(existing.preset_names or []) | set(names))
+        if merged != sorted(existing.preset_names or []):
+            existing.preset_names = merged
+            session.commit()
+            stats["presets_updated"] += 1
 
     return stats

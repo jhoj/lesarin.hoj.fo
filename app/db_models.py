@@ -41,6 +41,13 @@ class OutputField(Base):
     # VendorNumber ← ["Vtal", "V-Tal"]. Used to auto-locate the field on a
     # never-seen vendor. Applies across all vendors (a vendor's own mapping wins).
     aliases: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    # Output-name presets pulled from the central brain (docs/brain-sync.md "A
+    # third kind: what customers do with the data") — names other customers'
+    # accounting systems expect for this field, e.g. "Bilagsnr" for
+    # InvoiceNo. Unlike ``aliases`` (what a *label on the invoice* looks
+    # like), these are what a *customer renamed the output field to* —
+    # suggestions for the profile editor, never applied automatically.
+    preset_names: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
 
 class User(Base):

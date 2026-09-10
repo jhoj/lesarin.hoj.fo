@@ -294,3 +294,68 @@ def test_mostly_valid_outcomes_do_not_auto_withdraw(client, admin_headers, tmp_p
 
     templates = client.get("/admin/templates", headers=admin_headers).json()
     assert templates[0]["withdrawn"] is False
+
+
+# --- Output-name presets: hashed until k sites independently agree -----------
+
+def _bundle_with_output_name(canonical="InvoiceNo", output_name="Bilagsnr") -> dict:
+    bundle = _bundle()
+    bundle["output_name_observations"] = [{"canonical": canonical, "output_name": output_name}]
+    return bundle
+
+
+def test_output_name_stays_hidden_until_k_sites_agree(client, admin_headers, tmp_path):
+    identity = _new_site_identity(tmp_path, "s1")
+    _enroll_and_activate(client, admin_headers, identity, "s1")
+    r = client.post(
+        "/sync/push", json=_bundle_with_output_name(),
+        headers={"Authorization": f"Bearer {identity.signed_jwt()}"},
+    )
+    assert r.json()["presets_revealed"] == 0
+
+    presets = client.get("/admin/output-name-presets", headers=admin_headers).json()
+    row = next(p for p in presets if p["canonical"] == "InvoiceNo")
+    # Only a hash and a count on file — the name itself isn't held yet.
+    assert row["sites"] == 1 and row["revealed"] is False and row["name"] is None
+
+    pulled = client.get("/sync/pull", headers={"Authorization": f"Bearer {identity.signed_jwt()}"})
+    assert pulled.json()["output_name_presets"] == []
+
+
+def test_a_second_site_reveals_the_output_name_preset(client, admin_headers, tmp_path):
+    s1 = _new_site_identity(tmp_path, "s1")
+    s2 = _new_site_identity(tmp_path, "s2")
+    _enroll_and_activate(client, admin_headers, s1, "s1")
+    _enroll_and_activate(client, admin_headers, s2, "s2")
+
+    client.post(
+        "/sync/push", json=_bundle_with_output_name(), headers={"Authorization": f"Bearer {s1.signed_jwt()}"}
+    )
+    r2 = client.post(
+        "/sync/push", json=_bundle_with_output_name(), headers={"Authorization": f"Bearer {s2.signed_jwt()}"}
+    )
+    assert r2.json()["presets_revealed"] == 1  # CENTRAL_VOCAB_K=2 → crossed the threshold
+
+    presets = client.get("/admin/output-name-presets", headers=admin_headers).json()
+    row = next(p for p in presets if p["canonical"] == "InvoiceNo")
+    assert row["revealed"] is True and row["name"] == "Bilagsnr"
+
+    pulled = client.get("/sync/pull", headers={"Authorization": f"Bearer {s1.signed_jwt()}"})
+    assert pulled.json()["output_name_presets"] == [{"key": "InvoiceNo", "names": ["Bilagsnr"]}]
+
+
+def test_different_output_names_for_the_same_field_are_counted_separately(client, admin_headers, tmp_path):
+    s1 = _new_site_identity(tmp_path, "s1")
+    s2 = _new_site_identity(tmp_path, "s2")
+    _enroll_and_activate(client, admin_headers, s1, "s1")
+    _enroll_and_activate(client, admin_headers, s2, "s2")
+
+    client.post(
+        "/sync/push", json=_bundle_with_output_name(output_name="Bilagsnr"),
+        headers={"Authorization": f"Bearer {s1.signed_jwt()}"},
+    )
+    r2 = client.post(
+        "/sync/push", json=_bundle_with_output_name(output_name="inv_no_kommuna_fin"),
+        headers={"Authorization": f"Bearer {s2.signed_jwt()}"},
+    )
+    assert r2.json()["presets_revealed"] == 0  # two different names, one site behind each so far

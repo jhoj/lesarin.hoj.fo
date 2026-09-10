@@ -35,6 +35,13 @@ interface VocabularyRow {
   revealed: boolean;
 }
 
+interface OutputNamePresetRow {
+  canonical: string;
+  name: string | null;
+  sites: number;
+  revealed: boolean;
+}
+
 const URL_KEY = 'lesarin.central.url';
 const TOKEN_KEY = 'lesarin.central.token';
 
@@ -75,6 +82,7 @@ export class BackOffice {
   readonly sites = signal<Site[]>([]);
   readonly templates = signal<CentralTemplate[]>([]);
   readonly vocabulary = signal<VocabularyRow[]>([]);
+  readonly outputNamePresets = signal<OutputNamePresetRow[]>([]);
   enrollmentNote = '';
 
   constructor() {
@@ -121,12 +129,13 @@ export class BackOffice {
     this.sites.set([]);
     this.templates.set([]);
     this.vocabulary.set([]);
+    this.outputNamePresets.set([]);
   }
 
   async refresh(): Promise<void> {
     this.error.set('');
     try {
-      const [sites, templates, vocabulary] = await Promise.all([
+      const [sites, templates, vocabulary, outputNamePresets] = await Promise.all([
         firstValueFrom(
           this.http.get<Site[]>(`${this.base()}/admin/sites`, { headers: this.authHeaders() }),
         ),
@@ -140,10 +149,16 @@ export class BackOffice {
             headers: this.authHeaders(),
           }),
         ),
+        firstValueFrom(
+          this.http.get<OutputNamePresetRow[]>(`${this.base()}/admin/output-name-presets`, {
+            headers: this.authHeaders(),
+          }),
+        ),
       ]);
       this.sites.set(sites);
       this.templates.set(templates);
       this.vocabulary.set(vocabulary);
+      this.outputNamePresets.set(outputNamePresets);
     } catch (err: unknown) {
       this.error.set(detail(err) ?? 'Could not reach the central service.');
     }
