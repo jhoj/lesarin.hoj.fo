@@ -13,7 +13,7 @@ from typing import Iterable, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db_models import FieldMapping, OutputField, Vendor
+from .db_models import FieldMapping, OutputField, Vendor, VendorTemplateVersion
 
 
 # ---- Output fields (the expected-output "setup" table) --------------------
@@ -97,6 +97,101 @@ def _apply_mappings(vendor: Vendor, mappings: Iterable[dict]) -> None:
         )
 
 
+def mappings_of(vendor: Vendor) -> List[dict]:
+    """A vendor's mappings in the dict shape create/update take — used for
+    snapshots and for putting an old version back."""
+    return [
+        {
+            "output": m.output_key,
+            "strategy": m.strategy,
+            "label": m.source_label,
+            "relation": m.relation,
+            "value_type": m.value_type,
+            "page": m.page,
+            "bbox": m.bbox,
+        }
+        for m in vendor.mappings
+    ]
+
+
+def record_version(
+    session: Session,
+    vendor: Vendor,
+    change: str,
+    user_id: Optional[int] = None,
+) -> VendorTemplateVersion:
+    """Snapshot a vendor's template as it now stands.
+
+    Called after every change, so version N is what the template looked like
+    once change N had been applied — including the final snapshot taken just
+    before a delete.
+    """
+    latest = session.scalar(
+        select(VendorTemplateVersion)
+        .where(VendorTemplateVersion.identifier == vendor.identifier)
+        .order_by(VendorTemplateVersion.version.desc())
+    )
+    snapshot = VendorTemplateVersion(
+        vendor_id=vendor.id,
+        identifier=vendor.identifier,
+        identifier_kind=vendor.identifier_kind,
+        name=vendor.name,
+        version=(latest.version + 1) if latest else 1,
+        match_keywords=list(vendor.match_keywords or []),
+        mappings=mappings_of(vendor),
+        change=change,
+        changed_by_user_id=user_id,
+    )
+    session.add(snapshot)
+    session.commit()
+    return snapshot
+
+
+def restore_version(
+    session: Session, version_id: int, user_id: Optional[int] = None
+) -> Optional[Vendor]:
+    """Put an old snapshot back, recreating the vendor if it was deleted.
+
+    The restore is itself recorded as a new version, so going back is as
+    reversible as the edit that made it necessary.
+    """
+    snapshot = session.get(VendorTemplateVersion, version_id)
+    if snapshot is None:
+        return None
+
+    vendor = get_vendor_by_identifier(session, snapshot.identifier, snapshot.identifier_kind)
+    if vendor is None:
+        return create_vendor(
+            session,
+            identifier=snapshot.identifier,
+            name=snapshot.name,
+            identifier_kind=snapshot.identifier_kind,
+            match_keywords=list(snapshot.match_keywords or []),
+            mappings=list(snapshot.mappings or []),
+            change="restored",
+            created_by_user_id=user_id,
+        )
+    return update_vendor(
+        session,
+        vendor.id,
+        name=snapshot.name,
+        match_keywords=list(snapshot.match_keywords or []),
+        mappings=list(snapshot.mappings or []),
+        change="restored",
+        changed_by_user_id=user_id,
+    )
+
+
+def list_versions(session: Session, identifier: str) -> List[VendorTemplateVersion]:
+    return list(
+        session.scalars(
+            select(VendorTemplateVersion)
+            .where(VendorTemplateVersion.identifier == identifier)
+            .order_by(VendorTemplateVersion.version.desc())
+        )
+    )
+
+
 def create_vendor(
     session: Session,
     identifier: str,
@@ -104,6 +199,8 @@ def create_vendor(
     identifier_kind: str = "vtal",
     match_keywords: Optional[List[str]] = None,
     mappings: Optional[List[dict]] = None,
+    change: str = "created",
+    created_by_user_id: Optional[int] = None,
 ) -> Vendor:
     vendor = Vendor(
         identifier=identifier.strip(),
@@ -115,6 +212,7 @@ def create_vendor(
     session.add(vendor)
     session.commit()
     session.refresh(vendor)
+    record_version(session, vendor, change=change, user_id=created_by_user_id)
     return vendor
 
 
@@ -126,6 +224,8 @@ def update_vendor(
     name: Optional[str] = None,
     match_keywords: Optional[List[str]] = None,
     mappings: Optional[List[dict]] = None,
+    change: str = "updated",
+    changed_by_user_id: Optional[int] = None,
 ) -> Optional[Vendor]:
     vendor = session.get(Vendor, vendor_id)
     if vendor is None:
@@ -140,13 +240,18 @@ def update_vendor(
         _apply_mappings(vendor, mappings)
     session.commit()
     session.refresh(vendor)
+    record_version(session, vendor, change=change, user_id=changed_by_user_id)
     return vendor
 
 
-def delete_vendor(session: Session, vendor_id: int) -> bool:
+def delete_vendor(session: Session, vendor_id: int, deleted_by_user_id: Optional[int] = None) -> bool:
     vendor = session.get(Vendor, vendor_id)
     if vendor is None:
         return False
+    # Snapshot first — this is the version most worth being able to put back.
+    # The row survives the delete (vendor_id goes null) and stays findable by
+    # identifier, so a mistaken deletion is recoverable.
+    record_version(session, vendor, change="deleted", user_id=deleted_by_user_id)
     session.delete(vendor)
     session.commit()
     return True

@@ -159,6 +159,41 @@ class Vendor(Base):
     __table_args__ = (UniqueConstraint("identifier", "identifier_kind", name="uq_vendor_identifier"),)
 
 
+class VendorTemplateVersion(Base):
+    """A snapshot of one vendor's template, kept every time it changes.
+
+    Templates are shared: every customer's extraction depends on them, and
+    saving one replaces its mappings wholesale. Without history a single
+    careless edit — or a delete — silently destroys knowledge that took a
+    human to build. Each version records what the template looked like, who
+    changed it and why, so any of them can be put back.
+
+    ``vendor_id`` goes null rather than cascading when a vendor is deleted:
+    that snapshot is exactly the one worth keeping, and ``identifier`` is what
+    lets it be found and restored afterwards.
+    """
+
+    __tablename__ = "vendor_template_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vendor_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("vendors.id", ondelete="SET NULL"), default=None, index=True
+    )
+    identifier: Mapped[str] = mapped_column(String(64), index=True)
+    identifier_kind: Mapped[str] = mapped_column(String(16), default="vtal")
+    name: Mapped[str] = mapped_column(String(256))
+    version: Mapped[int] = mapped_column(default=1)  # 1, 2, 3... per vendor
+
+    match_keywords: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    # The mappings as they stood, in the same dict shape repo takes and returns.
+    mappings: Mapped[list] = mapped_column(JSON, default=list)
+
+    # created | updated | deleted | restored | learned
+    change: Mapped[str] = mapped_column(String(16), default="updated")
+    changed_by_user_id: Mapped[Optional[int]] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class FieldMapping(Base):
     """How to read one output field's value from one vendor's invoice."""
 

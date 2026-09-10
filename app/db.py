@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, event, inspect, select
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # DB location is overridable (tests point it at a temp file / in-memory).
@@ -42,7 +42,19 @@ def _make_engine(url: str | None = None):
     url = url or current_url()
     if url.startswith("sqlite"):
         # check_same_thread=False so the cache/uvicorn worker threads can share it.
-        return create_engine(url, future=True, connect_args={"check_same_thread": False})
+        eng = create_engine(url, future=True, connect_args={"check_same_thread": False})
+
+        # SQLite ignores foreign keys unless asked, per connection. Without
+        # this every ondelete in the schema is decoration: CASCADE doesn't
+        # clean up, SET NULL doesn't null, and the two databases behave
+        # differently under the same code.
+        @event.listens_for(eng, "connect")
+        def _enforce_foreign_keys(dbapi_connection, _record):  # pragma: no cover - trivial
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        return eng
     # Postgres: recycle connections the server may have closed underneath us,
     # which a long-lived service behind a proxy will otherwise trip over.
     return create_engine(url, future=True, pool_pre_ping=True)
