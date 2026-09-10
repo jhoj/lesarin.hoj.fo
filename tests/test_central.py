@@ -235,3 +235,62 @@ def test_site_jwt_verifies_against_the_registered_public_key(client, admin_heade
         site = verify_site_jwt(session, identity.signed_jwt())
         assert site is not None
         assert site.fingerprint == identity.fingerprint
+
+
+# --- Stage G: evidence-based auto-withdrawal ----------------------------------
+
+def _push_with_outcome(client, identity, valid: int, invalid: int) -> dict:
+    bundle = _bundle()
+    bundle["template_outcomes"] = [
+        {"identifier": "314188", "identifier_kind": "vtal", "valid": valid, "invalid": invalid}
+    ]
+    r = client.post(
+        "/sync/push", json=bundle, headers={"Authorization": f"Bearer {identity.signed_jwt()}"}
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_one_site_reporting_failures_does_not_auto_withdraw(client, admin_headers, tmp_path):
+    identity = _new_site_identity(tmp_path, "s1")
+    _enroll_and_activate(client, admin_headers, identity, "s1")
+    result = _push_with_outcome(client, identity, valid=0, invalid=5)
+    assert result["auto_withdrawn"] == []  # only one site's evidence — not enough
+
+    templates = client.get("/admin/templates", headers=admin_headers).json()
+    assert templates[0]["withdrawn"] is False
+    assert templates[0]["valid_count"] == 0 and templates[0]["invalid_count"] == 5
+    assert templates[0]["reporting_sites"] == 1
+
+
+def test_two_sites_reporting_failures_auto_withdraws(client, admin_headers, tmp_path):
+    s1 = _new_site_identity(tmp_path, "s1")
+    s2 = _new_site_identity(tmp_path, "s2")
+    _enroll_and_activate(client, admin_headers, s1, "s1")
+    _enroll_and_activate(client, admin_headers, s2, "s2")
+
+    _push_with_outcome(client, s1, valid=0, invalid=3)
+    result = _push_with_outcome(client, s2, valid=0, invalid=3)
+    assert result["auto_withdrawn"] == ["314188"]
+
+    templates = client.get("/admin/templates", headers=admin_headers).json()
+    assert templates[0]["withdrawn"] is True
+    assert templates[0]["reporting_sites"] == 2
+    assert templates[0]["invalid_count"] == 6
+
+    pulled = client.get("/sync/pull", headers={"Authorization": f"Bearer {s1.signed_jwt()}"})
+    assert pulled.json()["templates"] == []  # auto-withdrawn — no longer pulled
+
+
+def test_mostly_valid_outcomes_do_not_auto_withdraw(client, admin_headers, tmp_path):
+    s1 = _new_site_identity(tmp_path, "s1")
+    s2 = _new_site_identity(tmp_path, "s2")
+    _enroll_and_activate(client, admin_headers, s1, "s1")
+    _enroll_and_activate(client, admin_headers, s2, "s2")
+
+    _push_with_outcome(client, s1, valid=8, invalid=1)
+    result = _push_with_outcome(client, s2, valid=9, invalid=0)
+    assert result["auto_withdrawn"] == []
+
+    templates = client.get("/admin/templates", headers=admin_headers).json()
+    assert templates[0]["withdrawn"] is False

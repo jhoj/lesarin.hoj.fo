@@ -103,6 +103,12 @@
             <span class="name">{{ t.name }}</span>
             <span class="v-id">{{ t.identifier }}</span>
             <span class="muted small">v{{ t.version }} · {{ t.field_count }} field(s)</span>
+            @if (t.reporting_sites) {
+              <span class="muted small">
+                {{ t.valid_count }}/{{ t.valid_count + t.invalid_count }} ok across
+                {{ t.reporting_sites }} site(s)
+              </span>
+            }
             @if (t.withdrawn) {
               <span class="badge lo">withdrawn</span>
             } @else {

@@ -15,6 +15,12 @@ central knowledge service:
 And merges back what central publishes: templates become local mappings
 (already confirmed — they crossed the wire because *someone* confirmed them),
 and revealed vocabulary widens local ``OutputField.aliases``.
+
+Also reports **template outcomes** (docs/brain-sync.md "Withdrawing", Stage
+G): each push includes, per vendor with a confirmed template, how many of
+this site's *template-sourced* exports recently reconciled vs. didn't —
+evidence central can use to withdraw a template whose reads are failing
+across customers, not just at one site having a bad day.
 """
 
 from __future__ import annotations
@@ -26,9 +32,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import repo
-from .db_models import OutputField
+from .db_models import ExportRecord, OutputField
 
 BRAIN_BUNDLE_VERSION = 1
+
+# How many of a vendor's most recent template-sourced exports count toward
+# the outcome snapshot — recent enough to reflect the current layout, not a
+# lifetime average that a since-fixed template can never live down.
+_OUTCOME_WINDOW = 20
 
 
 def _template_fingerprint(mappings: List[dict]) -> str:
@@ -45,9 +56,22 @@ def _template_fingerprint(mappings: List[dict]) -> str:
     return hashlib.sha256(repr(labels).encode("utf-8")).hexdigest()
 
 
+def _recent_outcome(session: Session, identifier: str) -> dict:
+    """Valid/invalid counts among this vendor's most recent
+    template-sourced exports at this site."""
+    rows = session.scalars(
+        select(ExportRecord.valid)
+        .where(ExportRecord.vendor_identifier == identifier, ExportRecord.source == "template")
+        .order_by(ExportRecord.created_at.desc())
+        .limit(_OUTCOME_WINDOW)
+    ).all()
+    return {"valid": sum(1 for v in rows if v), "invalid": sum(1 for v in rows if not v)}
+
+
 def export_push_bundle(session: Session) -> dict:
     """Everything this site is ready to contribute right now."""
     templates = []
+    outcomes = []
     for vendor in repo.list_vendors(session):
         confirmed = repo.confirmed_mappings_of(vendor)
         if not confirmed:
@@ -60,6 +84,12 @@ def export_push_bundle(session: Session) -> dict:
             "layout_fingerprint": _template_fingerprint(confirmed),
             "mappings": confirmed,
         })
+        outcome = _recent_outcome(session, vendor.identifier)
+        if outcome["valid"] or outcome["invalid"]:
+            outcomes.append({
+                "identifier": vendor.identifier, "identifier_kind": vendor.identifier_kind,
+                **outcome,
+            })
 
     observations = [
         {
@@ -75,6 +105,7 @@ def export_push_bundle(session: Session) -> dict:
         "bundle_version": BRAIN_BUNDLE_VERSION,
         "confirmed_templates": templates,
         "label_observations": observations,
+        "template_outcomes": outcomes,
     }
 
 

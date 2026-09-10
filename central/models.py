@@ -101,6 +101,38 @@ class VendorTemplate(Base):
     )
 
 
+class TemplateOutcome(Base):
+    """One site's latest snapshot of how a vendor's template-sourced exports
+    have been reconciling (docs/brain-sync.md "Withdrawing" / Stage G).
+
+    Upserted (replaced, not accumulated) on every push, so this always holds
+    each site's *current* picture — summing across distinct sites is what
+    lets central tell "one customer having a bad day" apart from "reads are
+    failing across customers", which is the evidence a template gets
+    auto-withdrawn on (see ``central/sync.py::_merge_outcomes``).
+
+    Tracked per vendor identifier, not per layout fingerprint — the site-
+    local ``export_records`` table this is drawn from
+    (``app.brain._recent_outcome``) doesn't record which layout a read
+    matched, only which vendor. Documented simplification: a withdrawal
+    applies to every published template for that identifier.
+    """
+
+    __tablename__ = "template_outcomes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identifier: Mapped[str] = mapped_column(String(64), index=True)
+    identifier_kind: Mapped[str] = mapped_column(String(16), default="vtal")
+    site_fingerprint: Mapped[str] = mapped_column(String(64))
+    valid_count: Mapped[int] = mapped_column(default=0)
+    invalid_count: Mapped[int] = mapped_column(default=0)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+
+    __table_args__ = (
+        UniqueConstraint("identifier", "identifier_kind", "site_fingerprint", name="uq_outcome_site"),
+    )
+
+
 class LabelObservation(Base):
     """One (label, canonical field) pairing, counted across distinct sites.
 

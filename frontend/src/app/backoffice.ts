@@ -23,6 +23,9 @@ interface CentralTemplate {
   withdrawn: boolean;
   published_at: string;
   updated_at: string;
+  valid_count: number;
+  invalid_count: number;
+  reporting_sites: number;
 }
 
 interface VocabularyRow {

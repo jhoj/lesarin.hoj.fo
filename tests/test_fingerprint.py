@@ -161,3 +161,44 @@ def test_merge_pull_bundle_widens_local_aliases():
         assert stats["vocabulary_updated"] == 1
         field = next(f for f in repo.list_output_fields(session) if f.key == "InvoiceNo")
         assert set(field.aliases) == {"Fakturanr", "Invoice No", "Bilagsnr"}
+
+
+# --- app.brain: template outcomes (Stage G evidence) --------------------------
+
+def test_push_bundle_reports_recent_template_outcomes():
+    from app import auth
+    from app.db_models import ExportRecord
+
+    with SessionLocal() as session:
+        repo.create_vendor(
+            session, identifier="314188", name="Effo",
+            mappings=[{"output": "InvoiceNo", "strategy": "label", "label": "Fakturanr",
+                       "confirmed": True}],
+        )
+        user = auth.create_user(session, "outcome@x.com", "password12")
+        for valid in (True, True, False):
+            session.add(ExportRecord(
+                user_id=user.id, vendor_identifier="314188", invoice_no="n", source="template",
+                valid=valid,
+            ))
+        # A heuristic-sourced export shouldn't count toward this template's outcome.
+        session.add(ExportRecord(
+            user_id=user.id, vendor_identifier="314188", invoice_no="n2", source="heuristic",
+            valid=False,
+        ))
+        session.commit()
+
+        bundle = brain.export_push_bundle(session)
+        outcome = next(o for o in bundle["template_outcomes"] if o["identifier"] == "314188")
+        assert outcome == {"identifier": "314188", "identifier_kind": "vtal", "valid": 2, "invalid": 1}
+
+
+def test_push_bundle_omits_outcomes_for_vendors_with_no_exports():
+    with SessionLocal() as session:
+        repo.create_vendor(
+            session, identifier="900900", name="No Exports Yet",
+            mappings=[{"output": "InvoiceNo", "strategy": "label", "label": "Fakturanr",
+                       "confirmed": True}],
+        )
+        bundle = brain.export_push_bundle(session)
+        assert bundle["template_outcomes"] == []

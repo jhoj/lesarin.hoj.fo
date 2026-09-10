@@ -33,7 +33,7 @@ from app import auth as human_auth
 
 from . import admin_auth, identity_verify, sync as central_sync
 from .db import get_session, init_db
-from .models import Admin, EnrollmentToken, LabelObservation, Site, VendorTemplate
+from .models import Admin, EnrollmentToken, LabelObservation, Site, TemplateOutcome, VendorTemplate
 from .trust import current_site
 
 
@@ -106,6 +106,11 @@ class TemplateOut(BaseModel):
     withdrawn: bool
     published_at: str
     updated_at: str
+    # Cross-site evidence this vendor's templates are reconciling (or not) —
+    # what the auto-withdraw check in central/sync.py acts on.
+    valid_count: int = 0
+    invalid_count: int = 0
+    reporting_sites: int = 0
 
 
 class VocabularyOut(BaseModel):
@@ -123,12 +128,20 @@ def _site_out(s: Site) -> SiteOut:
     )
 
 
-def _template_out(t: VendorTemplate) -> TemplateOut:
+def _template_out(t: VendorTemplate, session: Session) -> TemplateOut:
+    outcome_rows = list(session.scalars(
+        select(TemplateOutcome).where(
+            TemplateOutcome.identifier == t.identifier, TemplateOutcome.identifier_kind == t.identifier_kind
+        )
+    ))
     return TemplateOut(
         id=t.id, identifier=t.identifier, identifier_kind=t.identifier_kind, name=t.name,
         layout_fingerprint=t.layout_fingerprint, version=t.version,
         field_count=len(t.mappings or []), withdrawn=t.withdrawn_at is not None,
         published_at=t.published_at.isoformat(), updated_at=t.updated_at.isoformat(),
+        valid_count=sum(r.valid_count for r in outcome_rows),
+        invalid_count=sum(r.invalid_count for r in outcome_rows),
+        reporting_sites=len(outcome_rows),
     )
 
 
@@ -257,7 +270,7 @@ def list_templates(
     stmt = select(VendorTemplate).order_by(VendorTemplate.identifier, VendorTemplate.id)
     if identifier:
         stmt = stmt.where(VendorTemplate.identifier == identifier)
-    return [_template_out(t) for t in session.scalars(stmt)]
+    return [_template_out(t, session) for t in session.scalars(stmt)]
 
 
 @app.post("/admin/templates/{template_id}/withdraw", response_model=TemplateOut)
@@ -275,7 +288,7 @@ def withdraw_template(
     t.withdrawn_at = datetime.now(timezone.utc)
     session.commit()
     session.refresh(t)
-    return _template_out(t)
+    return _template_out(t, session)
 
 
 @app.get("/admin/vocabulary", response_model=List[VocabularyOut])
