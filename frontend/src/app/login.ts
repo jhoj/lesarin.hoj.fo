@@ -32,6 +32,21 @@ import { Auth } from './auth';
           />
         </label>
 
+        @if (mfaRequired()) {
+          <label>
+            Authenticator code
+            <input
+              type="text"
+              name="totp"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="6-digit code, or a recovery code"
+              [(ngModel)]="totp"
+              autofocus
+            />
+          </label>
+        }
+
         <button class="primary" type="submit" [disabled]="busy()">
           {{ mode() === 'login' ? 'Log in' : 'Sign up' }}
         </button>
@@ -100,13 +115,16 @@ export class Login {
   readonly mode = signal<'login' | 'register'>('login');
   readonly busy = signal(false);
   readonly error = signal('');
+  readonly mfaRequired = signal(false);
   email = '';
   password = '';
+  totp = '';
 
   toggle(ev: Event): void {
     ev.preventDefault();
     this.mode.update((m) => (m === 'login' ? 'register' : 'login'));
     this.error.set('');
+    this.mfaRequired.set(false);
   }
 
   async submit(): Promise<void> {
@@ -115,15 +133,26 @@ export class Login {
     try {
       const res =
         this.mode() === 'login'
-          ? await this.api.login(this.email, this.password)
+          ? await this.api.login(this.email, this.password, this.mfaChallenge())
           : await this.api.register(this.email, this.password);
       this.auth.setSession(res.token, res.email);
       await this.router.navigate(['/app']);
     } catch (err: unknown) {
-      this.error.set(detail(err) ?? 'Something went wrong. Try again.');
+      const msg = detail(err) ?? 'Something went wrong. Try again.';
+      if (/MFA code/i.test(msg)) {
+        this.mfaRequired.set(true);
+      }
+      this.error.set(msg);
     } finally {
       this.busy.set(false);
     }
+  }
+
+  /** A recovery code is longer and carries a dash; anything else is a TOTP code. */
+  private mfaChallenge(): { totp?: string; recovery_code?: string } | undefined {
+    const code = this.totp.trim();
+    if (!code) return undefined;
+    return code.includes('-') ? { recovery_code: code } : { totp: code };
   }
 }
 

@@ -197,16 +197,20 @@ time too.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/auth/register` · `POST /api/auth/login` | email + password → bearer token |
+| `POST /api/auth/register` · `POST /api/auth/login` | email + password (+ `totp`/`recovery_code` if 2FA is on) → bearer token |
 | `GET /api/me` | the current account |
+| `POST /api/me/logout-all` | invalidate every outstanding session token ("log out everywhere") |
+| `GET/POST /api/me/api-keys` · `DELETE /api/me/api-keys/{id}` | issue/list/revoke API keys for automation (`Authorization: Bearer lk_...`, works anywhere a session token does) |
+| `POST /api/me/mfa/enroll` · `POST /api/me/mfa/verify` · `DELETE /api/me/mfa` | enable/confirm/disable TOTP two-factor auth (password required to disable) |
 | `GET /api/canonical-fields` | the fields you can put in a profile |
 | `GET/POST/PUT/DELETE /api/me/profiles[...]` | manage output profiles |
 | `POST /api/me/export?profile_id=&fmt=` | upload a PDF → data in your format |
 
-Auth is dependency-free: passwords are PBKDF2-hashed and tokens are HMAC-signed
-with the standard library (no native crypto build, no session table). Set
-`LESARIN_SECRET` in production to pin the token-signing key; otherwise a random
-secret is generated and persisted beside the database.
+Auth is dependency-free: passwords are PBKDF2-hashed, tokens are HMAC-signed,
+and TOTP (RFC 6238) is implemented on `hashlib`/`hmac` — all standard library,
+no native crypto build, no session table. Set `LESARIN_SECRET` in production to
+pin the token-signing key; otherwise a random secret is generated and persisted
+beside the database. Five wrong login attempts locks an account for 15 minutes.
 
 Uploads are capped per account — `LESARIN_EXPORT_RATE_PER_MINUTE` (default 60),
 enough for the batch client to work through a folder while stopping a runaway
