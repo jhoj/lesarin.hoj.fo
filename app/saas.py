@@ -23,6 +23,7 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 import re
 
 from pydantic import BaseModel, Field as PydField, field_validator
@@ -400,8 +401,12 @@ async def export_invoice(
     if len(data) > _MAX_BYTES:
         raise HTTPException(413, "File too large (max 10 MB).")
     try:
-        document = loader.load(data)
+        # Parsing (and OCR on scans) is CPU-bound and can run for seconds. The
+        # service runs a single uvicorn worker, so doing this on the event loop
+        # would stall every other customer's request until it finished.
+        document = await run_in_threadpool(loader.load, data)
     except Exception as exc:  # noqa: BLE001
+        logger.warning("export user=%s file=%r could not read PDF: %s", user.id, file.filename, exc)
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
     invoice, extraction = build_canonical(session, document, learn_as_user=user.id)
@@ -420,12 +425,45 @@ async def export_invoice(
     # Machine-readable read quality, so automation callers can branch without
     # parsing the body: how the read was made and whether the numbers held up.
     check = validation.validate(extraction.values(), extraction.lines)
+    # Measured against what the customer actually asked for, not against what
+    # the engine happened to attempt — a field the reader never even tried for
+    # is still an empty value in their file, and they need to know about it.
+    requested = (
+        [f["canonical"] for f in profile_fields] if profile_fields else list(canonical.CANONICAL_ORDER)
+    )
+    found = extraction.values()
+    missing = [key for key in requested if found.get(key) in (None, "")]
     headers = {
         "Content-Disposition": f'attachment; filename="{stem}.{rendered.extension}"',
         "X-Lesarin-Source": extraction.source,          # template | heuristic | none
         "X-Lesarin-Valid": "true" if check["valid"] else "false",
         "X-Lesarin-Problems": str(len(check["problems"])),
+        # How much of the requested output was located, and precisely what was
+        # not — so a caller (or the UI) can say "check these two fields"
+        # instead of silently handing over a form with empty values.
+        "X-Lesarin-Located": f"{len(requested) - len(missing)}/{len(requested)}",
+        "X-Lesarin-Missing": ",".join(missing),
+        "X-Lesarin-Vendor": extraction.vendor.name if extraction.vendor else "",
     }
+    # The line to reach for when a customer asks why an export looked wrong:
+    # which vendor was recognised, whether a template or the heuristics did the
+    # reading, how much was found, and whether the numbers held together.
+    located = sum(1 for f in extraction.fields.values() if f.found)
+    logger.info(
+        "export user=%s file=%r vendor=%s source=%s located=%d/%d ocr=%s fmt=%s "
+        "valid=%s problems=%d ms=%d",
+        user.id,
+        file.filename,
+        extraction.vendor.identifier if extraction.vendor else None,
+        extraction.source,
+        located,
+        len(extraction.fields),
+        document.ocr_used,
+        out_fmt,
+        check["valid"],
+        len(check["problems"]),
+        (time.perf_counter() - started) * 1000,
+    )
 
     _record_export(
         session,

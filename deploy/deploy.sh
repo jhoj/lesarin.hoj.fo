@@ -9,6 +9,12 @@ set -euo pipefail
 APP_DIR="${DEPLOY_PATH:-/opt/lesarin}"
 cd "$APP_DIR"
 
+# Snapshot the database before anything else touches the machine. A release is
+# exactly when a schema change runs, so this is the copy most likely to matter.
+# Never block a deploy on it, but say so loudly if it didn't work.
+echo "==> Backing up the database first"
+sudo /bin/bash "$APP_DIR/deploy/backup.sh" || echo "WARNING: pre-deploy backup failed — continuing" >&2
+
 # Virtualenv (created once, reused after).
 if [ ! -x .venv/bin/python ]; then
   python3 -m venv .venv
