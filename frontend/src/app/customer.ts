@@ -1,13 +1,19 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 
 import { Api } from './api';
+import { Auth } from './auth';
 import {
+  ApiKeyCreated,
+  ApiKeyOut,
   CanonicalField,
   ExportFormat,
   ExportRecord,
   ExportQuality,
+  Me,
+  MfaEnrollOut,
   OutputProfile,
   ProfilePayload,
 } from './models';
@@ -29,10 +35,23 @@ interface FieldRow {
 })
 export class Customer implements OnInit {
   private readonly api = inject(Api);
+  private readonly auth = inject(Auth);
+  private readonly router = inject(Router);
 
   readonly canonical = signal<CanonicalField[]>([]);
   readonly profiles = signal<OutputProfile[]>([]);
   readonly history = signal<ExportRecord[]>([]);
+
+  // Security panel state.
+  readonly me = signal<Me | null>(null);
+  readonly apiKeys = signal<ApiKeyOut[]>([]);
+  readonly newKeyName = signal('');
+  readonly justCreatedKey = signal<ApiKeyCreated | null>(null);
+  readonly mfaEnrollment = signal<MfaEnrollOut | null>(null);
+  readonly mfaVerifyCode = signal('');
+  readonly mfaDisablePassword = signal('');
+  readonly securityError = signal('');
+  readonly securityBusy = signal(false);
 
   // Export panel state.
   readonly exportProfileId = signal<number | null>(null);
@@ -58,6 +77,7 @@ export class Customer implements OnInit {
     this.canonical.set(await this.api.canonicalFields());
     await this.reloadProfiles();
     await this.reloadHistory();
+    await this.reloadSecurity();
   }
 
   private async reloadProfiles(): Promise<void> {
@@ -213,6 +233,100 @@ export class Customer implements OnInit {
       await this.reloadProfiles();
     } finally {
       this.busy.set(false);
+    }
+  }
+
+  // ---- Security: API keys + MFA --------------------------------------------
+
+  private async reloadSecurity(): Promise<void> {
+    const [me, keys] = await Promise.all([this.api.me(), this.api.listApiKeys()]);
+    this.me.set(me);
+    this.apiKeys.set(keys);
+  }
+
+  async createApiKey(): Promise<void> {
+    const name = this.newKeyName().trim();
+    if (!name) return;
+    this.securityError.set('');
+    this.securityBusy.set(true);
+    try {
+      const created = await this.api.createApiKey(name);
+      this.justCreatedKey.set(created);
+      this.newKeyName.set('');
+      this.apiKeys.set(await this.api.listApiKeys());
+    } catch (err: unknown) {
+      this.securityError.set(detail(err) ?? 'Could not create the key.');
+    } finally {
+      this.securityBusy.set(false);
+    }
+  }
+
+  async revokeApiKey(key: ApiKeyOut): Promise<void> {
+    this.securityBusy.set(true);
+    try {
+      await this.api.revokeApiKey(key.id);
+      this.apiKeys.set(await this.api.listApiKeys());
+    } finally {
+      this.securityBusy.set(false);
+    }
+  }
+
+  dismissCreatedKey(): void {
+    this.justCreatedKey.set(null);
+  }
+
+  async startMfaEnroll(): Promise<void> {
+    this.securityError.set('');
+    this.securityBusy.set(true);
+    try {
+      this.mfaEnrollment.set(await this.api.mfaEnroll());
+      this.mfaVerifyCode.set('');
+    } catch (err: unknown) {
+      this.securityError.set(detail(err) ?? 'Could not start 2FA enrollment.');
+    } finally {
+      this.securityBusy.set(false);
+    }
+  }
+
+  cancelMfaEnroll(): void {
+    this.mfaEnrollment.set(null);
+  }
+
+  async confirmMfaEnroll(): Promise<void> {
+    this.securityError.set('');
+    this.securityBusy.set(true);
+    try {
+      await this.api.mfaVerify(this.mfaVerifyCode().trim());
+      this.mfaEnrollment.set(null);
+      this.me.set(await this.api.me());
+    } catch (err: unknown) {
+      this.securityError.set(detail(err) ?? 'Invalid code.');
+    } finally {
+      this.securityBusy.set(false);
+    }
+  }
+
+  async disableMfa(): Promise<void> {
+    this.securityError.set('');
+    this.securityBusy.set(true);
+    try {
+      await this.api.mfaDisable(this.mfaDisablePassword());
+      this.mfaDisablePassword.set('');
+      this.me.set(await this.api.me());
+    } catch (err: unknown) {
+      this.securityError.set(detail(err) ?? 'Wrong password.');
+    } finally {
+      this.securityBusy.set(false);
+    }
+  }
+
+  async logoutEverywhere(): Promise<void> {
+    this.securityBusy.set(true);
+    try {
+      await this.api.logoutAll();
+    } finally {
+      this.auth.clear();
+      await this.router.navigate(['/login']);
     }
   }
 }

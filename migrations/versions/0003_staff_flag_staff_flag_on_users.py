@@ -1,7 +1,7 @@
 """Add users.is_staff — the customer/staff line for the shared brain
 
-Revision ID: 0002_staff_flag
-Revises: 0001_baseline
+Revision ID: 0003_staff_flag
+Revises: 0002_auth_hardening
 Create Date: 2026-09-10 07:12:22.650744
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0002_staff_flag'
-down_revision = '0001_baseline'
+revision = '0003_staff_flag'
+down_revision = '0002_auth_hardening'
 branch_labels = None
 depends_on = None
 
