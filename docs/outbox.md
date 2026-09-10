@@ -73,10 +73,10 @@ This continuation is intentionally limited to three new files: `app/outbox.py`,
 site-agent, validation, database, CLI, or frontend implementations.
 
 The [workflow automation guide](workflow-automation.md) describes the implemented
-retry/time budget, responsible-user notifications, and explicit retry after human
-review. Stage A still needs durable delivery acknowledgements for consuming
-integrations and scheduled processing. This command can be called after processing
-as a separate step.
+retry/time budget, responsible-user notifications, explicit retry after human
+review, and opt-in scheduled execution. Durable delivery acknowledgements for
+consuming integrations remain a separate concern. This command can also be called
+after processing as a separate step.
 
 Verification:
 

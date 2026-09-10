@@ -93,9 +93,84 @@ SMTP acceptance is not a guarantee that a person read the message. A crash after
 SMTP acceptance but before saving the receipt can cause a duplicate notification;
 this favors notifying twice over silently losing the alert.
 
-## Remaining Work
+## Scheduled Execution
 
-Scheduled execution is a separate follow-up step. Until scheduling is installed,
-run the commands manually and serialize runs for each inbox. Retry budgets do not themselves provide delivery
-acknowledgements or prevent a consumer from importing the same invoice twice;
-see the outbox guide's delivery semantics before automating imports.
+Linux deployments can opt into `deploy/lesarin-workflow@.service` and
+`deploy/lesarin-workflow@.timer`. These are application deployment templates;
+adding them to the repository does not install or enable anything. They assume
+the existing `/opt/lesarin` installation and `lesarin` service account, plus Bash
+and `flock` (from util-linux).
+
+Create `/etc/lesarin/workflows/customer.env` with absolute paths:
+
+```ini
+LESARIN_INBOX=/var/lib/lesarin/inbox/customer
+LESARIN_JOB_CONFIG=/etc/lesarin/workflows/customer.yaml
+# Enable only after the consumer's duplicate-handling policy is ready:
+# LESARIN_OUTBOX=/var/lib/lesarin/outbox/customer
+```
+
+Create `customer.yaml` with the retry limits, responsible email, validation policy,
+and any output profile settings shown above. The workflow honors `db` in that
+configuration; `--db` overrides it. Otherwise the database and SMTP environment
+come from the existing `/etc/lesarin/lesarin.env`. Keep secrets out of version
+control and ensure the configuration is readable only by authorized operators
+and the service account. Systemd reads the `.env` files as root; Python reads
+the YAML as `lesarin`.
+
+Create the inbox and optional outbox under `/var/lib/lesarin`, owned by
+`lesarin:lesarin`. The service has a read-only filesystem elsewhere. For example,
+after configuring those files and directories, install and enable the timer:
+
+```bash
+sudo install -m 644 deploy/lesarin-workflow@.service /etc/systemd/system/
+sudo install -m 644 deploy/lesarin-workflow@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lesarin-workflow@customer.timer
+sudo systemctl start lesarin-workflow@customer.service
+sudo journalctl -u lesarin-workflow@customer.service
+```
+
+It runs shortly after boot and approximately five minutes after the previous run
+finishes, with up to 30 seconds of jitter. Change the interval with a timer
+override, not by running a second scheduler on the same inbox. The service allows
+one hour per run; adjust `TimeoutStartSec` for large OCR queues. A killed process
+may not have persisted its current attempt and requires operator investigation.
+
+The runner `deploy/run-workflow.sh` holds an exclusive, nonblocking inbox lock
+through processing, notification, and optional export. The lock file stays in
+place between runs; never delete it while a runner might be active. Exit `75`
+means another runner owns that inbox. Systemd treats `2` (review pending) and
+`75` as expected results, but `1` (read, export, or notification error) remains a
+service failure visible in the journal. The timer still schedules subsequent
+runs after a failure. Monitor failed units; review notifications do not replace
+operational monitoring.
+
+The runner exports completed sidecars even when processing returns `1` or `2`
+for other documents. Unexpected exit codes, such as termination by a signal,
+stop the run before export. Both commands print their own JSON summary in the
+journal. Automatic outbox export is disabled unless `LESARIN_OUTBOX` is set.
+
+For a manual retry that shares the scheduler lock, run from the application
+directory, as the service account with the same database/SMTP environment:
+
+```bash
+LESARIN_INBOX=/var/lib/lesarin/inbox/customer \
+LESARIN_JOB_CONFIG=/etc/lesarin/workflows/customer.yaml \
+bash deploy/run-workflow.sh --retry-attention
+```
+
+`LESARIN_PYTHON` can override the default `/opt/lesarin/.venv/bin/python` for local
+testing. Direct `python -m app.workflow` calls do not acquire the runner's lock;
+do not run them concurrently with a scheduled job on the same inbox. Deliver new
+PDFs by writing elsewhere and atomically renaming them into the inbox, so a
+scheduled read never catches a partly copied file.
+
+## Delivery Boundary
+
+Retry budgets, notifications, and scheduling do not provide import
+acknowledgements or prevent a consumer from importing the same invoice twice.
+Keep automatic outbox export disabled until the consumer deduplicates imports
+or archives the original PDF and sidecar after confirmed import. See the
+[outbox delivery semantics](outbox.md#delivery-semantics). Scheduled central sync
+is not included; the runner only uses the site's existing local knowledge.

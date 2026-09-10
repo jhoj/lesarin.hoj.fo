@@ -1,0 +1,23 @@
+# Opt-in per-customer job. Install manually; not enabled by the SaaS deploy.
+[Unit]
+Description=Lesarin invoice workflow (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=lesarin
+Group=lesarin
+WorkingDirectory=/opt/lesarin
+EnvironmentFile=/etc/lesarin/lesarin.env
+EnvironmentFile=/etc/lesarin/workflows/%i.env
+ExecStart=/usr/bin/bash /opt/lesarin/deploy/run-workflow.sh
+# Review queues and an already-running inbox are not service failures.
+SuccessExitStatus=2 75
+TimeoutStartSec=1h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lesarin
