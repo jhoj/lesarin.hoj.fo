@@ -19,6 +19,7 @@ fields they want, renamed to their keys, in json / xml / ubl / oioubl.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import List, Optional
 
@@ -30,7 +31,7 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, engine, exporters, repo, validation
+from . import auth, canonical, engine, exporters, rate_limit, repo, validation
 from .db import get_session
 from .db_models import OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
@@ -40,6 +41,11 @@ router = APIRouter(prefix="/api")
 logger = logging.getLogger("lesarin.saas")
 
 _MAX_BYTES = 10 * 1024 * 1024
+
+# Uploads per account per minute. Generous enough for the batch client to work
+# through a folder, low enough that a runaway loop can't monopolise the worker.
+_EXPORT_RATE_PER_MINUTE = int(os.environ.get("LESARIN_EXPORT_RATE_PER_MINUTE", "60"))
+export_limiter = rate_limit.RateLimiter(_EXPORT_RATE_PER_MINUTE)
 
 
 # --- Schemas ---------------------------------------------------------------
@@ -338,6 +344,15 @@ async def export_invoice(
     session: Session = Depends(get_session),
 ) -> Response:
     """Upload a PDF, get it back in the customer's chosen shape and format."""
+    # Checked before anything else: a rejected upload should cost nothing.
+    retry_after = export_limiter.take(f"user:{user.id}")
+    if retry_after is not None:
+        raise HTTPException(
+            429,
+            f"Too many uploads — the limit is {_EXPORT_RATE_PER_MINUTE} per minute. "
+            f"Try again in {retry_after:.0f}s.",
+            headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
     started = time.perf_counter()
     data = await file.read()
     if not data:

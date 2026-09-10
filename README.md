@@ -208,6 +208,12 @@ with the standard library (no native crypto build, no session table). Set
 `LESARIN_SECRET` in production to pin the token-signing key; otherwise a random
 secret is generated and persisted beside the database.
 
+Uploads are capped per account — `LESARIN_EXPORT_RATE_PER_MINUTE` (default 60),
+enough for the batch client to work through a folder while stopping a runaway
+loop from monopolising the worker. Over the limit returns `429` with
+`Retry-After`. The cap is per worker process, so raising `--workers` multiplies
+it.
+
 ```bash
 # 1. register and keep the token
 TOKEN=$(curl -s -X POST localhost:8000/api/auth/register \
