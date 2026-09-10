@@ -12,6 +12,7 @@ set -euo pipefail
 APP_DIR=/opt/lesarin
 DATA_DIR=/var/lib/lesarin
 ENV_DIR=/etc/lesarin
+BACKUP_DIR=/var/backups/lesarin
 SERVICE_USER=lesarin
 DEPLOY_USER="${DEPLOY_USER:-deploy}"   # the SSH user GitHub Actions logs in as
 
@@ -51,9 +52,21 @@ install -m 644 "$APP_DIR/deploy/lesarin.service" /etc/systemd/system/lesarin.ser
 systemctl daemon-reload
 systemctl enable lesarin || true
 
+echo "==> Installing the nightly backup timer"
+mkdir -p "$BACKUP_DIR"
+chmod 750 "$BACKUP_DIR"
+for unit in lesarin-backup.service lesarin-backup.timer; do
+  install -m 644 "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit" 2>/dev/null \
+    || echo "    (code not deployed yet — copy deploy/$unit after first rsync)"
+done
+systemctl daemon-reload
+systemctl enable --now lesarin-backup.timer || true
+
 echo "==> Granting the deploy user a no-password 'systemctl restart lesarin'"
+# backup.sh is in the list so deploy.sh can snapshot the database before a
+# release; it is a fixed path, not a user-supplied command.
 cat > /etc/sudoers.d/lesarin-deploy <<EOF
-$DEPLOY_USER ALL=(root) NOPASSWD: /bin/systemctl restart lesarin, /bin/systemctl status lesarin, /bin/systemctl is-active lesarin
+$DEPLOY_USER ALL=(root) NOPASSWD: /bin/systemctl restart lesarin, /bin/systemctl status lesarin, /bin/systemctl is-active lesarin, /bin/bash $APP_DIR/deploy/backup.sh
 EOF
 chmod 440 /etc/sudoers.d/lesarin-deploy
 

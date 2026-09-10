@@ -167,3 +167,15 @@ export interface ExportRecord {
   ocr_used: boolean;
   duration_ms: number;
 }
+
+/** How an export went, read back from the X-Lesarin-* response headers. */
+export interface ExportQuality {
+  /** 'template' = a saved vendor mapping was applied, 'heuristic' = best-effort. */
+  source: 'template' | 'heuristic' | 'none' | '';
+  vendor: string;
+  located: number;
+  total: number;
+  missing: string[];
+  valid: boolean;
+  problems: number;
+}

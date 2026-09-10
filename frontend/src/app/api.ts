@@ -6,6 +6,7 @@ import {
   CanonicalField,
   DocumentInfo,
   ExportRecord,
+  ExportQuality,
   FieldSuggestion,
   Mapping,
   Me,
@@ -124,12 +125,13 @@ export class Api {
     return firstValueFrom(this.http.delete(`${BASE}/me/profiles/${id}`));
   }
 
-  /** Upload a PDF and get the exported body back as text, with its filename. */
+  /** Upload a PDF and get the exported body back as text, with its filename
+   *  and how the read went (from the X-Lesarin-* headers). */
   async exportInvoice(
     file: File,
     profileId: number | null,
     fmt: string | null,
-  ): Promise<{ body: string; filename: string; contentType: string }> {
+  ): Promise<{ body: string; filename: string; contentType: string; quality: ExportQuality }> {
     const fd = new FormData();
     fd.append('file', file);
     const params: string[] = [];
@@ -141,10 +143,21 @@ export class Api {
     );
     const cd = res.headers.get('Content-Disposition') ?? '';
     const m = cd.match(/filename="?([^"]+)"?/);
+    const [located, total] = (res.headers.get('X-Lesarin-Located') ?? '0/0').split('/');
+    const missing = res.headers.get('X-Lesarin-Missing') ?? '';
     return {
       body: res.body ?? '',
       filename: m ? m[1] : 'invoice.txt',
       contentType: res.headers.get('Content-Type') ?? 'text/plain',
+      quality: {
+        source: (res.headers.get('X-Lesarin-Source') ?? '') as ExportQuality['source'],
+        vendor: res.headers.get('X-Lesarin-Vendor') ?? '',
+        located: Number(located) || 0,
+        total: Number(total) || 0,
+        missing: missing ? missing.split(',') : [],
+        valid: res.headers.get('X-Lesarin-Valid') === 'true',
+        problems: Number(res.headers.get('X-Lesarin-Problems')) || 0,
+      },
     };
   }
 }

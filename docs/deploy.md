@@ -29,7 +29,8 @@ Files involved:
 | --- | --- |
 | `.github/workflows/deploy.yml` | build + test on GitHub, deploy on the VPS runner |
 | `deploy/setup-server.sh` | one-time VPS bootstrap (deps, users, dirs, secret, unit, nginx) |
-| `deploy/deploy.sh` | server-side step each deploy: venv + deps + restart |
+| `deploy/deploy.sh` | server-side step each deploy: backup + venv + deps + restart |
+| `deploy/backup.sh` | database snapshot (nightly timer + before each deploy) |
 | `deploy/lesarin.service` | systemd unit (uvicorn) |
 | `deploy/nginx-lesarin.conf` | reverse proxy (`server_name lesarin.hoj.fo`) |
 
@@ -91,9 +92,57 @@ come back up, so a broken build never reaches users.
   `init_db()` at startup (tables, canonical vocabulary, back-filled columns).
 - **Token secret** — `LESARIN_SECRET` in `/etc/lesarin/lesarin.env`, generated
   once by the bootstrap. Pinning it keeps everyone logged in across deploys.
-- **Backups** — the whole state is one file. A nightly
-  `sqlite3 /var/lib/lesarin/lesarin.db ".backup '/var/backups/lesarin-$(date +\%F).db'"`
-  cron job is plenty to start.
+- **Backups** — see below. Automatic, nightly, plus one before every deploy.
+
+## Backups
+
+The database is the only irreplaceable thing on the server. Accounts could be
+recreated; the vendor templates are accumulated knowledge that nothing else can
+rebuild. `deploy/backup.sh` writes a dated, compressed copy into
+`/var/backups/lesarin` and prunes anything older than `KEEP_DAYS` (30).
+
+It runs in two places:
+
+- **Nightly**, via `lesarin-backup.timer` (installed by `setup-server.sh`).
+  `Persistent=true`, so a night the machine was off is caught up afterwards.
+- **Before every deploy**, from `deploy.sh` — a release is exactly when a
+  migration runs, so that copy is the one most likely to matter. A failure
+  there warns but doesn't block the deploy.
+
+It backs up whichever database is configured: `sqlite3 .backup` for SQLite
+(a consistent snapshot even mid-write, which `cp` is not), or `pg_dump
+--format=custom` when `LESARIN_DATABASE_URL` is set. Every run verifies the
+file is non-empty and readable, and refuses outright if the configured database
+doesn't exist — otherwise a wrong `LESARIN_DB` would quietly produce empty
+backups every night until the day one was needed.
+
+```bash
+sudo systemctl list-timers lesarin-backup      # when did it last run?
+sudo journalctl -u lesarin-backup -n 30        # did it succeed?
+sudo bash /opt/lesarin/deploy/backup.sh        # run one right now
+```
+
+### Restoring
+
+```bash
+sudo systemctl stop lesarin
+
+# SQLite
+sudo gunzip -c /var/backups/lesarin/lesarin-2026-09-10T03-14-00.db.gz \
+  | sudo tee /var/lib/lesarin/lesarin.db >/dev/null
+sudo chown lesarin:lesarin /var/lib/lesarin/lesarin.db
+
+# Postgres
+sudo -u postgres pg_restore --clean --if-exists --dbname=lesarin \
+  /var/backups/lesarin/lesarin-2026-09-10T03-14-00.dump
+
+sudo systemctl start lesarin
+curl -sS http://127.0.0.1:8000/health
+```
+
+Restoring an older schema than the running code expects is fine — migrations
+are applied at startup, so the restored database is brought forward
+automatically.
 
 ## Email (password reset)
 
@@ -154,6 +203,33 @@ sudo systemctl status 'actions.runner.*'        # is the runner service up?
 
 If a deploy job sits queued forever, the runner is offline — check the last
 line above, or the Runners page in repo settings.
+
+### Reading the logs
+
+The app logs to stdout, so journald has everything. Level comes from
+`LESARIN_LOG_LEVEL` in `/etc/lesarin/lesarin.env` (default `INFO`).
+
+Every export leaves one line saying how the read went — reach for it when a
+customer asks why an export looked wrong:
+
+```
+lesarin.saas: export user=7 file='faktura.pdf' vendor=314188 source=template \
+              located=6/10 ocr=False fmt=oioubl valid=False problems=2 ms=812
+```
+
+`source` is `template` (a taught vendor mapping was applied), `heuristic` (no
+mapping matched, best-effort read) or `none`. Changes to the shared brain are
+logged too — `vendor created` / `vendor updated` / `vendor deleted`, the last
+as a warning since it costs every customer that vendor's mappings:
+
+```bash
+sudo journalctl -u lesarin | grep 'lesarin.repo'     # who changed which template
+sudo journalctl -u lesarin -p warning                # parse failures + deletions
+```
+
+Log lines carry metadata only — never passwords, tokens, API keys, or any
+document content.
+
 
 ## Schema changes
 

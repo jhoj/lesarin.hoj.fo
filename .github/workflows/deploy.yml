@@ -1,20 +1,27 @@
 name: Deploy
 
-# Runs when a PR is merged (i.e. a push lands on main). GitHub-hosted machines
-# do the heavy lifting — build the Angular app and run the backend tests — and
-# only if everything is green does the *self-hosted runner on the VPS* pick up
-# the deploy job and put the release in place locally. No SSH keys or secrets:
-# the runner only makes outbound HTTPS calls to GitHub.
+# Two things happen here.
+#
+# * On a **pull request**, GitHub-hosted machines build the Angular app and run
+#   the backend tests, so a branch is proven green *before* it can be merged.
+#   The deploy job is skipped — unmerged code never reaches the server.
+# * On a **push to main** (i.e. a merge), the same build + test gate runs, and
+#   only if it's green does the *self-hosted runner on the VPS* pick up the
+#   deploy job and put the release in place locally. No SSH keys or secrets:
+#   the runner only makes outbound HTTPS calls to GitHub.
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
 
-# Never let two deploys overlap; queue them instead of cancelling so a half-
-# finished sync is never interrupted.
+# Deploys must never overlap, so pushes to main share one group and queue
+# instead of cancelling — a half-finished sync is never interrupted. Pull
+# requests get a group per branch, where superseding an outdated run is right.
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-test:
@@ -34,6 +41,11 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      # --- Test the frontend (jsdom, no browser needed) ------------------
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --watch=false
 
       # --- Test the backend (deploy is gated on green) -------------------
       - name: Set up Python
@@ -92,6 +104,9 @@ jobs:
 
   deploy:
     needs: [build-test, test-postgres]
+    # Never deploy a pull request — only main, once it's green. Without this
+    # guard the pull_request trigger above would ship unmerged code.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     # The runner installed on the VPS (Settings → Actions → Runners). It runs
     # as the local 'deploy' user, so everything below happens on the server
     # itself — no SSH, no secrets.

@@ -6,10 +6,12 @@ Run:  uvicorn app.main:app --reload
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -17,15 +19,20 @@ from . import __version__
 from .api import router as api_router
 from .saas import router as saas_router
 from .db import init_db
+from .logging_setup import configure_logging
 from .extraction import fields as field_extractor
 from .extraction import lines as line_extractor
 from .extraction import loader
 from .models import InvoiceResult
 
+logger = logging.getLogger("lesarin.api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     init_db()  # create SQLite tables if missing
+    logger.info("lesarin %s started (ocr_language=%s)", __version__, loader.ocr_language())
     yield
 
 
@@ -78,12 +85,16 @@ async def extract(file: UploadFile = File(...)) -> InvoiceResult:
         raise HTTPException(status_code=413, detail="File too large (max 10 MB).")
 
     try:
-        document = loader.load(data)
+        # CPU-bound (and OCR is slow) — keep it off the event loop.
+        document = await run_in_threadpool(loader.load, data)
     except Exception as exc:  # noqa: BLE001 — surface parse failures to the caller
+        logger.warning("extract: could not read PDF (%d bytes): %s", len(data), exc)
         raise HTTPException(status_code=422, detail=f"Could not read PDF: {exc}") from exc
 
-    result = field_extractor.extract(document, filename=file.filename, config=_CONFIG)
-    result.lines = line_extractor.extract_line_items(document, _CONFIG)
+    result = await run_in_threadpool(
+        field_extractor.extract, document, filename=file.filename, config=_CONFIG
+    )
+    result.lines = await run_in_threadpool(line_extractor.extract_line_items, document, _CONFIG)
     return result
 
 

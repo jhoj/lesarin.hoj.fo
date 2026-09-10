@@ -7,6 +7,7 @@ keywords against the document text.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable, List, Optional
 
@@ -14,6 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db_models import FieldMapping, OutputField, Vendor, VendorTemplateVersion
+
+logger = logging.getLogger("lesarin.repo")
 
 
 # ---- Output fields (the expected-output "setup" table) --------------------
@@ -212,6 +215,10 @@ def create_vendor(
     session.add(vendor)
     session.commit()
     session.refresh(vendor)
+    logger.info(
+        "vendor created id=%s identifier=%s name=%r mappings=%d",
+        vendor.id, vendor.identifier, vendor.name, len(vendor.mappings),
+    )
     record_version(session, vendor, change=change, user_id=created_by_user_id)
     return vendor
 
@@ -240,6 +247,11 @@ def update_vendor(
         _apply_mappings(vendor, mappings)
     session.commit()
     session.refresh(vendor)
+    logger.info(
+        "vendor updated id=%s identifier=%s mappings=%d%s",
+        vendor.id, vendor.identifier, len(vendor.mappings),
+        " (mappings replaced)" if mappings is not None else "",
+    )
     record_version(session, vendor, change=change, user_id=changed_by_user_id)
     return vendor
 
@@ -248,9 +260,14 @@ def delete_vendor(session: Session, vendor_id: int, deleted_by_user_id: Optional
     vendor = session.get(Vendor, vendor_id)
     if vendor is None:
         return False
-    # Snapshot first — this is the version most worth being able to put back.
-    # The row survives the delete (vendor_id goes null) and stays findable by
-    # identifier, so a mistaken deletion is recoverable.
+    # Warning, not info: templates are shared centrally, so a delete costs every
+    # customer that vendor's mappings.
+    logger.warning(
+        "vendor deleted id=%s identifier=%s name=%r", vendor.id, vendor.identifier, vendor.name
+    )
+    # Snapshot before it goes — this is the version most worth being able to put
+    # back. The row survives the delete (vendor_id goes null) and stays findable
+    # by identifier, so a mistaken deletion is recoverable.
     record_version(session, vendor, change="deleted", user_id=deleted_by_user_id)
     session.delete(vendor)
     session.commit()
