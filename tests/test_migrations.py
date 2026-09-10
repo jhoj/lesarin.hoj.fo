@@ -75,6 +75,24 @@ def test_a_pre_alembic_database_is_adopted_not_rebuilt(tmp_path):
     assert [(v.identifier, v.name) for v in vendors] == [("314188", "Effo")]
 
 
+def test_a_schema_built_from_the_models_is_stamped_current(tmp_path):
+    """create_all() builds the newest schema, not the baseline one. Stamping
+    such a database at the baseline would re-run every later migration against
+    columns and tables that already exist, which fails."""
+    path = tmp_path / "from_models.db"
+    built = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(built)
+    built.dispose()
+
+    db.use_database(path)
+    db.init_db()  # must not raise
+
+    with db.engine.connect() as connection:
+        context = MigrationContext.configure(connection)
+        assert context.get_current_revision() is not None
+        assert compare_metadata(context, Base.metadata) == []
+
+
 def test_a_stale_version_stamp_does_not_leave_an_empty_schema(tmp_path):
     """If the tables are dropped but the version table survives, the recorded
     revision is a lie — startup has to notice and rebuild rather than trust it

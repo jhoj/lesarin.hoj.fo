@@ -69,6 +69,7 @@ def run_migrations() -> None:
     those are stamped at the baseline first and then upgraded normally.
     """
     from alembic import command
+    from alembic.autogenerate import compare_metadata
     from alembic.config import Config
     from alembic.runtime.migration import MigrationContext
 
@@ -86,9 +87,15 @@ def run_migrations() -> None:
     has_tables = bool(present & set(Base.metadata.tables))
 
     if has_tables and not stamped:
-        # Pre-Alembic database: the tables are already there, so record where it
-        # stands instead of trying to create them again.
-        command.stamp(config, _BASELINE_REVISION)
+        # An untracked database with tables in it. Where it stands depends on
+        # what's actually there: a pre-Alembic production file is at the
+        # baseline, while a schema just built from the models (create_all, as
+        # the tests do) is already current. Ask the schema rather than guess —
+        # stamping the wrong one either re-runs migrations against columns that
+        # exist, or skips migrations that are genuinely needed.
+        with engine.connect() as connection:
+            diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+        command.stamp(config, "head" if not diff else _BASELINE_REVISION)
     elif stamped and not has_tables:
         # The stamp outlived the schema — someone dropped the tables and the
         # version table survived, so the recorded revision is a lie. Upgrading
