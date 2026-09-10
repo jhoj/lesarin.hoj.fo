@@ -1,8 +1,14 @@
-"""SQLite engine and session plumbing.
+"""Engine and session plumbing, for SQLite or Postgres.
 
-A single small SQLite file (``data/lesarin.db``) holds the customer's expected
-output format, the known vendors, and each vendor's field mappings. Tables are
-created on demand at startup — no migration tool needed for a store this small.
+Two deployments, one data layer:
+
+* **SQLite** (default) — a single file, zero configuration. This is what the
+  CLI, the TUI and a self-hosted site use, and what the tests run against.
+* **Postgres** — set ``LESARIN_DATABASE_URL`` and the service uses that
+  instead, which is what lets the deployed API run more than one worker.
+
+Schema changes go through Alembic either way; :func:`init_db` applies any
+outstanding migrations at startup, so neither deployment needs a manual step.
 """
 
 from __future__ import annotations
@@ -10,24 +16,36 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # DB location is overridable (tests point it at a temp file / in-memory).
 _DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "lesarin.db"
 DB_PATH = Path(os.environ.get("LESARIN_DB", _DEFAULT_PATH))
+# A full SQLAlchemy URL wins over the SQLite path when set, e.g.
+# postgresql+psycopg://lesarin:...@localhost/lesarin
+DATABASE_URL = os.environ.get("LESARIN_DATABASE_URL") or None
 
 
 class Base(DeclarativeBase):
     pass
 
 
+def current_url() -> str:
+    if DATABASE_URL:
+        return DATABASE_URL
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{DB_PATH}"
+
+
 def _make_engine(url: str | None = None):
-    if url is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        url = f"sqlite:///{DB_PATH}"
-    # check_same_thread=False so the cache/uvicorn worker threads can share it.
-    return create_engine(url, future=True, connect_args={"check_same_thread": False})
+    url = url or current_url()
+    if url.startswith("sqlite"):
+        # check_same_thread=False so the cache/uvicorn worker threads can share it.
+        return create_engine(url, future=True, connect_args={"check_same_thread": False})
+    # Postgres: recycle connections the server may have closed underneath us,
+    # which a long-lived service behind a proxy will otherwise trip over.
+    return create_engine(url, future=True, pool_pre_ping=True)
 
 
 engine = _make_engine()
@@ -35,12 +53,61 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Safe to call repeatedly."""
-    from . import db_models  # noqa: F401 — register mappers before create_all
+    """Bring the database up to date. Safe to call repeatedly."""
+    from . import db_models  # noqa: F401 — register mappers before any DDL
 
-    Base.metadata.create_all(bind=engine)
-    _ensure_columns(engine)
+    run_migrations()
     seed_canonical_fields()
+
+
+def run_migrations() -> None:
+    """Apply outstanding Alembic migrations against the current engine.
+
+    Databases that predate Alembic (the deployed SQLite file, or a test that
+    built its schema straight from the models) already have the tables but no
+    version stamp. Running an upgrade there would try to create what exists, so
+    those are stamped at the baseline first and then upgraded normally.
+    """
+    from alembic import command
+    from alembic.autogenerate import compare_metadata
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+
+    root = Path(__file__).resolve().parent.parent
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "migrations"))
+    config.set_main_option("sqlalchemy.url", current_url())
+    config.attributes["connection"] = engine
+
+    with engine.begin() as connection:
+        context = MigrationContext.configure(connection)
+        stamped = context.get_current_revision() is not None
+
+    present = set(inspect(engine).get_table_names())
+    has_tables = bool(present & set(Base.metadata.tables))
+
+    if has_tables and not stamped:
+        # An untracked database with tables in it. Where it stands depends on
+        # what's actually there: a pre-Alembic production file is at the
+        # baseline, while a schema just built from the models (create_all, as
+        # the tests do) is already current. Ask the schema rather than guess —
+        # stamping the wrong one either re-runs migrations against columns that
+        # exist, or skips migrations that are genuinely needed.
+        with engine.connect() as connection:
+            diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+        command.stamp(config, "head" if not diff else _BASELINE_REVISION)
+    elif stamped and not has_tables:
+        # The stamp outlived the schema — someone dropped the tables and the
+        # version table survived, so the recorded revision is a lie. Upgrading
+        # from it would create nothing at all; start over from base.
+        command.stamp(config, "base", purge=True)
+
+    command.upgrade(config, "head")
+
+
+# The first migration describes the schema as it stood before Alembic existed,
+# so an untracked database can be adopted by stamping this and moving forward.
+_BASELINE_REVISION = "0001_baseline"
 
 
 def seed_canonical_fields() -> None:
@@ -69,42 +136,22 @@ def seed_canonical_fields() -> None:
         session.commit()
 
 
-def _ensure_columns(eng=None) -> None:
-    """Add columns introduced after a table already exists.
-
-    ``create_all`` only creates missing *tables*, not new columns, and there is
-    no migration tool — so back-fill additive columns here. Idempotent.
-    """
-    eng = eng or engine
-    additions = {
-        "output_fields": {"aliases": "ALTER TABLE output_fields ADD COLUMN aliases JSON"},
-        "vendors": {
-            "created_by_user_id": "ALTER TABLE vendors ADD COLUMN created_by_user_id INTEGER"
-        },
-        "users": {
-            "token_version": "ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0",
-            "failed_login_count": "ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0",
-            "locked_until": "ALTER TABLE users ADD COLUMN locked_until DATETIME",
-        },
-    }
-    with eng.begin() as conn:
-        for table, columns in additions.items():
-            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
-            if not existing:
-                continue  # table doesn't exist yet — create_all will make it
-            for name, ddl in columns.items():
-                if name not in existing:
-                    conn.exec_driver_sql(ddl)
-
-
-def use_database(path: str | Path) -> None:
-    """Point the engine + session factory at a different SQLite file.
+def use_database(path_or_url: str | Path) -> None:
+    """Point the engine + session factory at a different database.
 
     Lets the CLI honour ``--db`` without a process restart; the module-level
     ``engine`` (used by ``init_db``) and ``SessionLocal`` are both rebound.
+    Accepts a SQLite path or a full URL — and clears any URL from the
+    environment when given a path, so ``--db`` always wins over
+    ``LESARIN_DATABASE_URL``.
     """
-    global engine, DB_PATH
-    DB_PATH = Path(path)
+    global engine, DB_PATH, DATABASE_URL
+    text = str(path_or_url)
+    if "://" in text:
+        DATABASE_URL = text
+    else:
+        DATABASE_URL = None
+        DB_PATH = Path(text)
     engine = _make_engine()
     SessionLocal.configure(bind=engine)
 

@@ -67,10 +67,45 @@ jobs:
           path: frontend/dist/lesarin/browser
           retention-days: 3
 
+  # The suite above runs on SQLite, which is what local development and a
+  # self-hosted site use. Production runs Postgres, so run it there too —
+  # otherwise a dialect difference (or a migration that only works on SQLite)
+  # would first be discovered on the server.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lesarin
+          POSTGRES_PASSWORD: lesarin
+          POSTGRES_DB: lesarin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps and run tests against Postgres
+        env:
+          LESARIN_DATABASE_URL: postgresql+psycopg://lesarin:lesarin@localhost:5432/lesarin_test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pytest -q
+
   deploy:
-    needs: build-test
+    needs: [build-test, test-postgres]
     # Never deploy a pull request — only main, once it's green. Without this
-    # guard the new pull_request trigger above would ship unmerged code.
+    # guard the pull_request trigger above would ship unmerged code.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     # The runner installed on the VPS (Settings → Actions → Runners). It runs
     # as the local 'deploy' user, so everything below happens on the server

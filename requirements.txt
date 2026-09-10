@@ -16,6 +16,9 @@ uvicorn[standard]==0.52.4
 python-multipart==0.0.32
 pydantic==2.13.5
 SQLAlchemy==2.0.52
+alembic==1.19.2
+# Postgres driver — only used when LESARIN_DATABASE_URL points at Postgres.
+psycopg[binary]==3.3.5
 
 # --- Extraction ------------------------------------------------------------
 pdfplumber==0.11.10

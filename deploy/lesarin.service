@@ -10,10 +10,12 @@ Type=simple
 User=lesarin
 Group=lesarin
 WorkingDirectory=/opt/lesarin
-# Secrets + paths (LESARIN_SECRET, LESARIN_DB). Created by setup-server.sh.
+# Secrets + paths (LESARIN_SECRET, LESARIN_DB, optionally
+# LESARIN_DATABASE_URL). Created by setup-server.sh.
 EnvironmentFile=/etc/lesarin/lesarin.env
-# One worker keeps SQLite writes contention-free; raise --workers (or move to
-# Postgres) once you outgrow that. Bound to localhost — nginx terminates TLS.
+# One worker keeps SQLite writes contention-free. Set LESARIN_DATABASE_URL to a
+# Postgres URL and that constraint goes away — then raise --workers. Bound to
+# localhost — nginx terminates TLS.
 ExecStart=/opt/lesarin/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=on-failure
 RestartSec=3

@@ -119,18 +119,3 @@ def test_suggest_fields_endpoint(client, sample_invoice_pdf):
     assert "VendorName" in by_key
 
 
-def test_init_db_back_fills_aliases_column(tmp_path):
-    # Simulate an OLD database whose output_fields predates the aliases column.
-    from sqlalchemy import create_engine
-    from app import db
-
-    eng = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    with eng.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE output_fields "
-            "(id INTEGER PRIMARY KEY, key VARCHAR, display_name VARCHAR, value_type VARCHAR, sort_order INTEGER)"
-        )
-    db._ensure_columns(eng)
-    with eng.begin() as conn:
-        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(output_fields)")}
-    assert "aliases" in cols
