@@ -149,4 +149,125 @@
       </form>
     }
   </section>
+
+  <!-- Security -->
+  <section class="panel">
+    <div class="panel-head"><h2>Security</h2></div>
+
+    <!-- API keys -->
+    <h3 class="sub">API keys</h3>
+    <p class="muted small">
+      For automation calling <code>/api/me/export</code> — issue a key instead of sharing your
+      password.
+    </p>
+
+    @if (justCreatedKey(); as created) {
+      <div class="one-time">
+        <p class="muted small">
+          Copy this now — it won't be shown again.
+        </p>
+        <code class="key">{{ created.key }}</code>
+        <button class="ghost" type="button" (click)="dismissCreatedKey()">Done</button>
+      </div>
+    }
+
+    <ul class="key-list">
+      @for (k of apiKeys(); track k.id) {
+        <li>
+          <span class="name">{{ k.name }}</span>
+          <code class="prefix">{{ k.prefix }}…</code>
+          @if (k.revoked_at) {
+            <span class="badge">revoked</span>
+          } @else {
+            <button class="danger" type="button" [disabled]="securityBusy()" (click)="revokeApiKey(k)">
+              Revoke
+            </button>
+          }
+        </li>
+      }
+      @if (apiKeys().length === 0) {
+        <li class="muted small">No API keys yet.</li>
+      }
+    </ul>
+
+    <form class="row" (ngSubmit)="createApiKey()">
+      <input
+        [ngModel]="newKeyName()"
+        (ngModelChange)="newKeyName.set($event)"
+        name="keyname"
+        placeholder="Key name (e.g. accounting-bot)"
+      />
+      <button class="ghost" type="submit" [disabled]="securityBusy() || !newKeyName().trim()">
+        New key
+      </button>
+    </form>
+
+    <!-- MFA -->
+    <h3 class="sub">Two-factor authentication</h3>
+
+    @if (me(); as m) {
+      @if (!m.mfa_enabled && !mfaEnrollment()) {
+        <div class="row">
+          <span class="muted small">Not enabled.</span>
+          <button class="ghost" type="button" [disabled]="securityBusy()" (click)="startMfaEnroll()">
+            Enable 2FA
+          </button>
+        </div>
+      }
+
+      @if (mfaEnrollment(); as enroll) {
+        <div class="one-time">
+          <p class="muted small">
+            Scan or enter this secret in your authenticator app, then confirm with a code.
+          </p>
+          <code class="key">{{ enroll.secret }}</code>
+          <p class="muted small break">{{ enroll.otpauth_url }}</p>
+          <p class="muted small">
+            Save these recovery codes somewhere safe — each works once if you lose your device:
+          </p>
+          <code class="key break">{{ enroll.recovery_codes.join('  ') }}</code>
+          <form class="row" (ngSubmit)="confirmMfaEnroll()">
+            <input
+              [ngModel]="mfaVerifyCode()"
+              (ngModelChange)="mfaVerifyCode.set($event)"
+              name="mfacode"
+              inputmode="numeric"
+              placeholder="6-digit code"
+            />
+            <button class="primary" type="submit" [disabled]="securityBusy()">Confirm</button>
+            <button class="ghost" type="button" (click)="cancelMfaEnroll()">Cancel</button>
+          </form>
+        </div>
+      }
+
+      @if (m.mfa_enabled) {
+        <div class="row">
+          <span class="badge">2FA enabled</span>
+          <input
+            type="password"
+            [ngModel]="mfaDisablePassword()"
+            (ngModelChange)="mfaDisablePassword.set($event)"
+            name="mfadisable"
+            placeholder="Password to disable"
+          />
+          <button class="danger" type="button" [disabled]="securityBusy()" (click)="disableMfa()">
+            Disable 2FA
+          </button>
+        </div>
+      }
+    }
+
+    @if (securityError()) {
+      <p class="err small">{{ securityError() }}</p>
+    }
+
+    <!-- Sessions -->
+    <h3 class="sub">Sessions</h3>
+    <div class="row">
+      <button class="ghost" type="button" [disabled]="securityBusy()" (click)="logoutEverywhere()">
+        Log out everywhere
+      </button>
+      <span class="muted small">Invalidates every device currently signed in, including this one.</span>
+    </div>
+  </section>
 </div>

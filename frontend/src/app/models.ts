@@ -122,6 +122,28 @@ export interface Me {
   email: string;
   /** Staff maintain the shared vendor templates; customers never see them. */
   is_staff: boolean;
+  mfa_enabled: boolean;
+}
+
+// ---- SaaS: security (API keys + MFA) ---------------------------------
+
+export interface ApiKeyOut {
+  id: number;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyOut {
+  key: string; // plaintext — shown once
+}
+
+export interface MfaEnrollOut {
+  otpauth_url: string;
+  secret: string;
+  recovery_codes: string[];
 }
 
 export interface CanonicalField {
