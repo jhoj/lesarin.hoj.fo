@@ -19,7 +19,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from .db import get_session
-from .db_models import Vendor
+from .db_models import User, Vendor
 from .document_store import store
 from .extraction import fields as field_extractor
 from .extraction import lines as line_extractor
@@ -39,7 +39,7 @@ from .models import (
     VendorIn,
     VendorOut,
 )
-from . import repo
+from . import auth, repo
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("lesarin.studio")
@@ -89,7 +89,9 @@ async def _parse_upload(data: bytes) -> loader.Document:
 
 @router.post("/documents", response_model=DocumentInfo)
 async def upload_document(
-    file: UploadFile = File(...), session: Session = Depends(get_session)
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
 ) -> DocumentInfo:
     data = await file.read()
     document = await _parse_upload(data)
@@ -110,7 +112,7 @@ async def upload_document(
 
 
 @router.get("/documents/{doc_id}/file")
-def get_document_file(doc_id: str) -> Response:
+def get_document_file(doc_id: str, _staff: User = Depends(auth.current_staff)) -> Response:
     entry = store.get(doc_id)
     if entry is None:
         raise HTTPException(404, "Document expired or not found — re-upload.")
@@ -119,7 +121,10 @@ def get_document_file(doc_id: str) -> Response:
 
 @router.post("/documents/{doc_id}/read", response_model=ReadResult)
 def read_document(
-    doc_id: str, template: TemplateIn, session: Session = Depends(get_session)
+    doc_id: str,
+    template: TemplateIn,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
 ) -> ReadResult:
     entry = store.get(doc_id)
     if entry is None:
@@ -148,7 +153,9 @@ def read_document(
 
 
 @router.get("/documents/{doc_id}/suggest-fields", response_model=SuggestFieldsResult)
-def suggest_fields(doc_id: str) -> SuggestFieldsResult:
+def suggest_fields(
+    doc_id: str, _staff: User = Depends(auth.current_staff)
+) -> SuggestFieldsResult:
     """Propose output fields detected on the document (for first-time setup)."""
     entry = store.get(doc_id)
     if entry is None:
@@ -169,13 +176,17 @@ def _output_field_out(f) -> OutputFieldOut:
 
 
 @router.get("/output-fields", response_model=List[OutputFieldOut])
-def list_output_fields(session: Session = Depends(get_session)) -> List[OutputFieldOut]:
+def list_output_fields(
+    session: Session = Depends(get_session), _staff: User = Depends(auth.current_staff)
+) -> List[OutputFieldOut]:
     return [_output_field_out(f) for f in repo.list_output_fields(session)]
 
 
 @router.post("/output-fields", response_model=OutputFieldOut)
 def upsert_output_field(
-    field: OutputFieldIn, session: Session = Depends(get_session)
+    field: OutputFieldIn,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
 ) -> OutputFieldOut:
     f = repo.upsert_output_field(
         session, field.key, field.display_name, field.value_type, field.sort_order, field.aliases
@@ -184,7 +195,11 @@ def upsert_output_field(
 
 
 @router.delete("/output-fields/{key}")
-def delete_output_field(key: str, session: Session = Depends(get_session)) -> dict:
+def delete_output_field(
+    key: str,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> dict:
     if not repo.delete_output_field(session, key):
         raise HTTPException(404, "Output field not found.")
     return {"deleted": key}
@@ -193,12 +208,18 @@ def delete_output_field(key: str, session: Session = Depends(get_session)) -> di
 # ---- Vendors (templates) --------------------------------------------------
 
 @router.get("/vendors", response_model=List[VendorOut])
-def list_vendors(session: Session = Depends(get_session)) -> List[VendorOut]:
+def list_vendors(
+    session: Session = Depends(get_session), _staff: User = Depends(auth.current_staff)
+) -> List[VendorOut]:
     return [_vendor_out(v) for v in repo.list_vendors(session)]
 
 
 @router.get("/vendors/{vendor_id}", response_model=VendorOut)
-def get_vendor(vendor_id: int, session: Session = Depends(get_session)) -> VendorOut:
+def get_vendor(
+    vendor_id: int,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> VendorOut:
     v = repo.get_vendor(session, vendor_id)
     if v is None:
         raise HTTPException(404, "Vendor not found.")
@@ -206,7 +227,11 @@ def get_vendor(vendor_id: int, session: Session = Depends(get_session)) -> Vendo
 
 
 @router.post("/vendors", response_model=VendorOut)
-def create_vendor(body: VendorIn, session: Session = Depends(get_session)) -> VendorOut:
+def create_vendor(
+    body: VendorIn,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> VendorOut:
     v = repo.create_vendor(
         session,
         identifier=body.identifier,
@@ -220,7 +245,10 @@ def create_vendor(body: VendorIn, session: Session = Depends(get_session)) -> Ve
 
 @router.put("/vendors/{vendor_id}", response_model=VendorOut)
 def update_vendor(
-    vendor_id: int, body: VendorIn, session: Session = Depends(get_session)
+    vendor_id: int,
+    body: VendorIn,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
 ) -> VendorOut:
     v = repo.update_vendor(
         session,
@@ -236,7 +264,11 @@ def update_vendor(
 
 
 @router.delete("/vendors/{vendor_id}")
-def delete_vendor(vendor_id: int, session: Session = Depends(get_session)) -> dict:
+def delete_vendor(
+    vendor_id: int,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> dict:
     if not repo.delete_vendor(session, vendor_id):
         raise HTTPException(404, "Vendor not found.")
     return {"deleted": vendor_id}
@@ -246,7 +278,9 @@ def delete_vendor(vendor_id: int, session: Session = Depends(get_session)) -> di
 
 @router.post("/extract", response_model=ReadResult)
 async def extract_with_template(
-    file: UploadFile = File(...), session: Session = Depends(get_session)
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    _user: User = Depends(auth.current_user),
 ) -> ReadResult:
     """Headless production path: detect the vendor and apply its saved template."""
     data = await file.read()

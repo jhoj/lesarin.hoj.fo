@@ -12,7 +12,9 @@ import { Auth } from './auth';
       <nav class="nav">
         <span class="brand">Lesarin</span>
         <a routerLink="/app" routerLinkActive="active">Export</a>
-        <a routerLink="/studio" routerLinkActive="active">Studio</a>
+        @if (auth.isStaff()) {
+          <a routerLink="/studio" routerLinkActive="active">Studio</a>
+        }
         <span class="spacer"></span>
         <span class="who muted">{{ auth.email() }}</span>
         <button class="ghost" (click)="logout()">Log out</button>

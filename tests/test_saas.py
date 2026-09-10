@@ -13,7 +13,8 @@ from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
-from app.db import Base, engine, init_db
+from app import auth
+from app.db import Base, SessionLocal, engine, init_db
 from app.main import app
 
 
@@ -47,6 +48,18 @@ def _invoice_with_vtal() -> bytes:
     ]
     doc.build(story)
     return buf.getvalue()
+
+
+def _staff_headers(client):
+    """Reading the shared vendor store is staff-only; these assertions are
+    checking what was learned centrally, which is a staff view."""
+    creds = {"email": "staff@lesarin.fo", "password": "password1"}
+    r = client.post("/api/auth/register", json=creds)
+    if r.status_code == 409:  # called more than once in a test
+        r = client.post("/api/auth/login", json=creds)
+    with SessionLocal() as session:
+        auth.set_staff(session, creds["email"])
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def _register(client, email="a@b.com", password="password1"):
@@ -148,10 +161,10 @@ def test_export_format_override(client):
 
 def test_first_upload_learns_vendor_centrally(client):
     h = _register(client)
-    assert client.get("/api/vendors").json() == []  # nothing taught yet
+    assert client.get("/api/vendors", headers=_staff_headers(client)).json() == []  # nothing taught yet
     client.post("/api/me/export", headers=h,
                 files={"file": ("inv.pdf", _invoice_with_vtal(), "application/pdf")})
-    vendors = client.get("/api/vendors").json()
+    vendors = client.get("/api/vendors", headers=_staff_headers(client)).json()
     assert len(vendors) == 1
     assert vendors[0]["identifier"] == "314188"
     assert vendors[0]["mappings"]  # a template was stored centrally
@@ -162,7 +175,7 @@ def test_second_user_benefits_from_first_users_mapping(client):
     # User one uploads first → vendor learned centrally.
     h1 = _register(client, "first@x.com")
     client.post("/api/me/export", headers=h1, files={"file": ("inv.pdf", pdf, "application/pdf")})
-    learned = client.get("/api/vendors").json()
+    learned = client.get("/api/vendors", headers=_staff_headers(client)).json()
     assert len(learned) == 1
 
     # User two uploads the same vendor → no new vendor is created (the central
@@ -172,4 +185,4 @@ def test_second_user_benefits_from_first_users_mapping(client):
                     files={"file": ("inv.pdf", pdf, "application/pdf")})
     assert r.status_code == 200
     assert json.loads(r.text)["InvoiceNo"] == "2026-0014"
-    assert len(client.get("/api/vendors").json()) == 1  # still just the one
+    assert len(client.get("/api/vendors", headers=_staff_headers(client)).json()) == 1  # still just the one

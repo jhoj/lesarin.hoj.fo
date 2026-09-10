@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import Base, engine
+from app import auth
+from app.db import Base, SessionLocal, engine, init_db
 from app.main import app
 
 
@@ -14,13 +15,25 @@ def fresh_db():
     """Reset the SQLite tables around each test for isolation."""
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    init_db()
     yield
     Base.metadata.drop_all(engine)
 
 
 @pytest.fixture()
 def client():
+    """A client signed in as staff.
+
+    The studio endpoints edit the shared vendor knowledge, so they are
+    staff-only; see test_studio_access.py for the refusal cases.
+    """
     with TestClient(app) as c:
+        token = c.post(
+            "/api/auth/register", json={"email": "staff@lesarin.fo", "password": "password1"}
+        ).json()["token"]
+        with SessionLocal() as session:
+            auth.set_staff(session, "staff@lesarin.fo")
+        c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 

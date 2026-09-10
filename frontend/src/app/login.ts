@@ -1,13 +1,13 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { Router } from '@angular/router';
 
 import { Api } from './api';
 import { Auth } from './auth';
 
 @Component({
   selector: 'app-login',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule],
   template: `
     <div class="auth-wrap">
       <form class="panel auth-card" (ngSubmit)="submit()">
@@ -59,7 +59,6 @@ import { Auth } from './auth';
           {{ mode() === 'login' ? 'No account yet?' : 'Already have an account?' }}
           <a href="#" (click)="toggle($event)">{{ mode() === 'login' ? 'Create one' : 'Log in' }}</a>
         </p>
-        <p class="muted small"><a routerLink="/studio">Open the vendor template studio →</a></p>
       </form>
     </div>
   `,
@@ -136,6 +135,8 @@ export class Login {
           ? await this.api.login(this.email, this.password, this.mfaChallenge())
           : await this.api.register(this.email, this.password);
       this.auth.setSession(res.token, res.email);
+      // Ask who we are, so the shell knows whether to offer the studio.
+      this.auth.setStaff((await this.api.me()).is_staff);
       await this.router.navigate(['/app']);
     } catch (err: unknown) {
       const msg = detail(err) ?? 'Something went wrong. Try again.';

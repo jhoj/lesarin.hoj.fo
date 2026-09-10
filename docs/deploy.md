@@ -144,6 +144,21 @@ Restoring an older schema than the running code expects is fine — migrations
 are applied at startup, so the restored database is brought forward
 automatically.
 
+## Staff accounts
+
+The studio edits shared vendor knowledge, so it's staff-only — and there is
+deliberately no way to grant that over HTTP. Register the account normally,
+then promote it on the server:
+
+```bash
+cd /opt/lesarin
+sudo -u lesarin .venv/bin/python scripts/make_staff.py me@firm.fo
+sudo -u lesarin .venv/bin/python scripts/make_staff.py --list
+```
+
+Everyone is a customer until promoted, including existing accounts after this
+change ships.
+
 ## Updating the systemd unit or nginx config
 
 These are copied into `/etc/...` during the one-time setup, so editing the repo

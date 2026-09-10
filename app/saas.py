@@ -80,6 +80,7 @@ class TokenOut(BaseModel):
 class MeOut(BaseModel):
     id: int
     email: str
+    is_staff: bool
     mfa_enabled: bool
 
 
@@ -200,7 +201,9 @@ def me(user: User = Depends(auth.current_user), session: Session = Depends(get_s
     mfa = session.scalar(
         select(MfaCredential).where(MfaCredential.user_id == user.id, MfaCredential.confirmed_at.isnot(None))
     )
-    return MeOut(id=user.id, email=user.email, mfa_enabled=mfa is not None)
+    return MeOut(
+        id=user.id, email=user.email, is_staff=user.is_staff, mfa_enabled=mfa is not None
+    )
 
 
 @router.post("/me/logout-all", response_model=LogoutAllOut)
