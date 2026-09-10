@@ -7,6 +7,7 @@ keywords against the document text.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable, List, Optional
 
@@ -14,6 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db_models import FieldMapping, OutputField, Vendor
+
+logger = logging.getLogger("lesarin.repo")
 
 
 # ---- Output fields (the expected-output "setup" table) --------------------
@@ -115,6 +118,10 @@ def create_vendor(
     session.add(vendor)
     session.commit()
     session.refresh(vendor)
+    logger.info(
+        "vendor created id=%s identifier=%s name=%r mappings=%d",
+        vendor.id, vendor.identifier, vendor.name, len(vendor.mappings),
+    )
     return vendor
 
 
@@ -140,6 +147,11 @@ def update_vendor(
         _apply_mappings(vendor, mappings)
     session.commit()
     session.refresh(vendor)
+    logger.info(
+        "vendor updated id=%s identifier=%s mappings=%d%s",
+        vendor.id, vendor.identifier, len(vendor.mappings),
+        " (mappings replaced)" if mappings is not None else "",
+    )
     return vendor
 
 
@@ -147,6 +159,11 @@ def delete_vendor(session: Session, vendor_id: int) -> bool:
     vendor = session.get(Vendor, vendor_id)
     if vendor is None:
         return False
+    # Warning, not info: templates are shared centrally, so a delete costs every
+    # customer that vendor's mappings.
+    logger.warning(
+        "vendor deleted id=%s identifier=%s name=%r", vendor.id, vendor.identifier, vendor.name
+    )
     session.delete(vendor)
     session.commit()
     return True

@@ -32,4 +32,5 @@ cffi==2.1.1
 # --- Tests -----------------------------------------------------------------
 httpx==0.28.1
 pytest==9.1.1
+anyio==4.15.1          # pytest plugin used by the concurrency test
 reportlab==5.0.1
