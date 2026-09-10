@@ -1,0 +1,16 @@
+# Nightly database backup.
+# Install to /etc/systemd/system/, then: systemctl enable --now lesarin-backup.timer
+[Unit]
+Description=Nightly Lesarin database backup
+
+[Timer]
+OnCalendar=daily
+# Spread the load a little, and don't fire exactly on the hour.
+RandomizedDelaySec=30m
+# If the machine was off at the scheduled time, run once it's back — a missed
+# night should not silently become a missing backup.
+Persistent=true
+Unit=lesarin-backup.service
+
+[Install]
+WantedBy=timers.target

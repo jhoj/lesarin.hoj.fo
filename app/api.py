@@ -11,9 +11,11 @@ Flow it supports:
 
 from __future__ import annotations
 
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from .db import get_session
@@ -40,6 +42,7 @@ from .models import (
 from . import auth, repo
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("lesarin.studio")
 
 _MAX_BYTES = 10 * 1024 * 1024
 _CONFIG = field_extractor.load_config()
@@ -67,14 +70,18 @@ def _vendor_out(v: Vendor) -> VendorOut:
     )
 
 
-def _parse_upload(data: bytes) -> loader.Document:
+async def _parse_upload(data: bytes) -> loader.Document:
     if not data:
         raise HTTPException(400, "Empty file.")
     if len(data) > _MAX_BYTES:
         raise HTTPException(413, "File too large (max 10 MB).")
     try:
-        return loader.load(data)
+        # pdfplumber parsing — and Tesseract OCR for scans — is CPU-bound and
+        # can run for seconds. Off the event loop, or it stalls every other
+        # request in the worker (the service runs a single worker).
+        return await run_in_threadpool(loader.load, data)
     except Exception as exc:  # noqa: BLE001
+        logger.warning("upload: could not read PDF (%d bytes): %s", len(data), exc)
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
 
@@ -87,7 +94,7 @@ async def upload_document(
     _staff: User = Depends(auth.current_staff),
 ) -> DocumentInfo:
     data = await file.read()
-    document = _parse_upload(data)
+    document = await _parse_upload(data)
     doc_id = store.put(data, document)
 
     detected = None
@@ -277,7 +284,7 @@ async def extract_with_template(
 ) -> ReadResult:
     """Headless production path: detect the vendor and apply its saved template."""
     data = await file.read()
-    document = _parse_upload(data)
+    document = await _parse_upload(data)
 
     vendor = repo.detect_vendor(session, templater.document_text(document))
     located = []
