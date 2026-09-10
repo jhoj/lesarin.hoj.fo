@@ -18,6 +18,8 @@ fields they want, renamed to their keys, in json / xml / ubl / oioubl.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
@@ -35,6 +37,7 @@ from .exporters import CanonicalInvoice
 from .extraction import loader
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("lesarin.saas")
 
 _MAX_BYTES = 10 * 1024 * 1024
 
@@ -335,6 +338,7 @@ async def export_invoice(
     session: Session = Depends(get_session),
 ) -> Response:
     """Upload a PDF, get it back in the customer's chosen shape and format."""
+    started = time.perf_counter()
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file.")
@@ -346,6 +350,7 @@ async def export_invoice(
         # would stall every other customer's request until it finished.
         document = await run_in_threadpool(loader.load, data)
     except Exception as exc:  # noqa: BLE001
+        logger.warning("export user=%s file=%r could not read PDF: %s", user.id, file.filename, exc)
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
     invoice, extraction = build_canonical(session, document, learn_as_user=user.id)
@@ -370,4 +375,23 @@ async def export_invoice(
         "X-Lesarin-Valid": "true" if check["valid"] else "false",
         "X-Lesarin-Problems": str(len(check["problems"])),
     }
+    # The line to reach for when a customer asks why an export looked wrong:
+    # which vendor was recognised, whether a template or the heuristics did the
+    # reading, how much was found, and whether the numbers held together.
+    located = sum(1 for f in extraction.fields.values() if f.found)
+    logger.info(
+        "export user=%s file=%r vendor=%s source=%s located=%d/%d ocr=%s fmt=%s "
+        "valid=%s problems=%d ms=%d",
+        user.id,
+        file.filename,
+        extraction.vendor.identifier if extraction.vendor else None,
+        extraction.source,
+        located,
+        len(extraction.fields),
+        document.ocr_used,
+        out_fmt,
+        check["valid"],
+        len(check["problems"]),
+        (time.perf_counter() - started) * 1000,
+    )
     return Response(content=rendered.body, media_type=rendered.media_type, headers=headers)
