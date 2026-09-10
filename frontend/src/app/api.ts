@@ -3,6 +3,8 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import {
+  ApiKeyCreated,
+  ApiKeyOut,
   CanonicalField,
   DocumentInfo,
   ExportRecord,
@@ -10,6 +12,7 @@ import {
   FieldSuggestion,
   Mapping,
   Me,
+  MfaEnrollOut,
   OutputField,
   OutputProfile,
   ProfilePayload,
@@ -81,12 +84,48 @@ export class Api {
     return firstValueFrom(this.http.post<TokenResponse>(`${BASE}/auth/register`, { email, password }));
   }
 
-  login(email: string, password: string): Promise<TokenResponse> {
-    return firstValueFrom(this.http.post<TokenResponse>(`${BASE}/auth/login`, { email, password }));
+  login(
+    email: string,
+    password: string,
+    mfa?: { totp?: string; recovery_code?: string },
+  ): Promise<TokenResponse> {
+    return firstValueFrom(
+      this.http.post<TokenResponse>(`${BASE}/auth/login`, { email, password, ...mfa }),
+    );
   }
 
   me(): Promise<Me> {
     return firstValueFrom(this.http.get<Me>(`${BASE}/me`));
+  }
+
+  logoutAll(): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${BASE}/me/logout-all`, {}));
+  }
+
+  // ---- SaaS: security (API keys + MFA) -------------------------------------
+
+  listApiKeys(): Promise<ApiKeyOut[]> {
+    return firstValueFrom(this.http.get<ApiKeyOut[]>(`${BASE}/me/api-keys`));
+  }
+
+  createApiKey(name: string): Promise<ApiKeyCreated> {
+    return firstValueFrom(this.http.post<ApiKeyCreated>(`${BASE}/me/api-keys`, { name }));
+  }
+
+  revokeApiKey(id: number): Promise<unknown> {
+    return firstValueFrom(this.http.delete(`${BASE}/me/api-keys/${id}`));
+  }
+
+  mfaEnroll(): Promise<MfaEnrollOut> {
+    return firstValueFrom(this.http.post<MfaEnrollOut>(`${BASE}/me/mfa/enroll`, {}));
+  }
+
+  mfaVerify(code: string): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${BASE}/me/mfa/verify`, { code }));
+  }
+
+  mfaDisable(password: string): Promise<unknown> {
+    return firstValueFrom(this.http.request('DELETE', `${BASE}/me/mfa`, { body: { password } }));
   }
 
   // ---- SaaS: profiles + export -------------------------------------------

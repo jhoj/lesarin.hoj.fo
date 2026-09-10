@@ -1,7 +1,7 @@
 """Add export_records — one row per invoice put through the service
 
-Revision ID: 0003_export_history
-Revises: 0002_staff_flag
+Revision ID: 0004_export_history
+Revises: 0003_staff_flag
 Create Date: 2026-09-10 07:17:30.771423
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0003_export_history'
-down_revision = '0002_staff_flag'
+revision = '0004_export_history'
+down_revision = '0003_staff_flag'
 branch_labels = None
 depends_on = None
 
