@@ -7,6 +7,7 @@ import {
   CanonicalField,
   ExportFormat,
   ExportRecord,
+  ExportQuality,
   OutputProfile,
   ProfilePayload,
 } from './models';
@@ -38,6 +39,7 @@ export class Customer implements OnInit {
   readonly exportFormat = signal<string>('');
   readonly file = signal<File | null>(null);
   readonly output = signal<string | null>(null);
+  readonly quality = signal<ExportQuality | null>(null);
   readonly status = signal('');
   readonly busy = signal(false);
   private lastBlob: { body: string; filename: string; contentType: string } | null = null;
@@ -91,6 +93,7 @@ export class Customer implements OnInit {
   private setFile(file: File | null): void {
     this.file.set(file);
     this.output.set(null);
+    this.quality.set(null);
     this.lastBlob = null;
     this.status.set(file ? `Ready: ${file.name}` : '');
   }
@@ -104,6 +107,7 @@ export class Customer implements OnInit {
       const res = await this.api.exportInvoice(file, this.exportProfileId(), this.exportFormat() || null);
       this.lastBlob = res;
       this.output.set(res.body);
+      this.quality.set(res.quality);
       this.status.set('Done.');
       await this.reloadHistory();
     } catch (err: unknown) {
@@ -111,6 +115,17 @@ export class Customer implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  /** Plain-language summary of how the read went, for the status strip. */
+  qualityHeadline(q: ExportQuality): string {
+    if (q.source === 'template') {
+      return q.vendor ? `Read using the saved mapping for ${q.vendor}.` : 'Read using a saved mapping.';
+    }
+    if (q.source === 'heuristic') {
+      return 'Best-effort read — no saved mapping for this supplier yet.';
+    }
+    return "Nothing could be read from this document.";
   }
 
   download(): void {
