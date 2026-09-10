@@ -1,20 +1,39 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pdfplumber>=0.11
-pdf2image>=1.17
-pytesseract>=0.3.10
-python-dateutil>=2.9
-dateparser>=1.2
-pydantic>=2.6
-python-multipart>=0.0.9
-PyYAML>=6.0
-SQLAlchemy>=2.0
-alembic>=1.13
+# Pinned exactly, because deploy/deploy.sh runs `pip install -r requirements.txt`
+# on the VPS on every deploy. With open ranges, a release published upstream
+# between two deploys could change production without a single commit here —
+# and CI would have been testing a different resolution than the server ran.
+#
+# To upgrade something:
+#   pip install -U <package>          # in a scratch venv
+#   pip freeze | grep -i <package>    # copy the version back here
+#   pytest -q                         # and let the PR's CI confirm it
+#
+# Verified installable on Python 3.11 (what CI uses) through 3.14.
+
+# --- Service ---------------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+SQLAlchemy==2.0.52
+alembic==1.19.2
 # Postgres driver — only used when LESARIN_DATABASE_URL points at Postgres.
-psycopg[binary]>=3.1
-textual>=0.80
-cffi>=1.16
-httpx>=0.27
-pytest>=8.0
-anyio>=4.0
-reportlab>=4.1
+psycopg[binary]==3.3.5
+
+# --- Extraction ------------------------------------------------------------
+pdfplumber==0.11.10
+pdf2image==1.17.0
+pytesseract==0.3.13
+python-dateutil==2.9.0.post0
+dateparser==1.4.3
+PyYAML==6.0.3
+
+# --- Terminal UI -----------------------------------------------------------
+textual==8.2.8
+cffi==2.1.1
+
+# --- Tests -----------------------------------------------------------------
+httpx==0.28.1
+pytest==9.1.1
+anyio==4.15.1          # pytest plugin used by the concurrency test
+reportlab==5.0.1

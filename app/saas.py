@@ -19,7 +19,9 @@ fields they want, renamed to their keys, in json / xml / ubl / oioubl.
 from __future__ import annotations
 
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
@@ -30,9 +32,9 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, engine, exporters, repo, validation
+from . import auth, canonical, engine, exporters, rate_limit, repo, validation
 from .db import get_session
-from .db_models import OutputProfile, ProfileField, User
+from .db_models import ApiKey, MfaCredential, OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
 from .extraction import loader
 
@@ -40,6 +42,11 @@ router = APIRouter(prefix="/api")
 logger = logging.getLogger("lesarin.saas")
 
 _MAX_BYTES = 10 * 1024 * 1024
+
+# Uploads per account per minute. Generous enough for the batch client to work
+# through a folder, low enough that a runaway loop can't monopolise the worker.
+_EXPORT_RATE_PER_MINUTE = int(os.environ.get("LESARIN_EXPORT_RATE_PER_MINUTE", "60"))
+export_limiter = rate_limit.RateLimiter(_EXPORT_RATE_PER_MINUTE)
 
 
 # --- Schemas ---------------------------------------------------------------
@@ -60,6 +67,11 @@ class Credentials(BaseModel):
         return v
 
 
+class LoginIn(Credentials):
+    totp: Optional[str] = None
+    recovery_code: Optional[str] = None
+
+
 class TokenOut(BaseModel):
     token: str
     email: str
@@ -68,6 +80,42 @@ class TokenOut(BaseModel):
 class MeOut(BaseModel):
     id: int
     email: str
+    mfa_enabled: bool
+
+
+class ApiKeyOut(BaseModel):
+    id: int
+    name: str
+    prefix: str
+    created_at: str
+    last_used_at: Optional[str]
+    revoked_at: Optional[str]
+
+
+class ApiKeyCreatedOut(ApiKeyOut):
+    key: str  # plaintext — only ever returned once, at creation
+
+
+class ApiKeyIn(BaseModel):
+    name: str = PydField(min_length=1, max_length=128)
+
+
+class MfaEnrollOut(BaseModel):
+    otpauth_url: str
+    secret: str
+    recovery_codes: List[str]
+
+
+class MfaCodeIn(BaseModel):
+    code: str
+
+
+class MfaDisableIn(BaseModel):
+    password: str
+
+
+class LogoutAllOut(BaseModel):
+    token_version: int
 
 
 class ProfileFieldIn(BaseModel):
@@ -117,20 +165,156 @@ def register(body: Credentials, session: Session = Depends(get_session)) -> Toke
         raise HTTPException(409, "An account with that email already exists.")
     user = auth.create_user(session, body.email, body.password)
     _create_default_profile(session, user)
-    return TokenOut(token=auth.make_token(user.id), email=user.email)
+    return TokenOut(token=auth.make_token(user.id, user.token_version), email=user.email)
 
 
 @router.post("/auth/login", response_model=TokenOut)
-def login(body: Credentials, session: Session = Depends(get_session)) -> TokenOut:
-    user = auth.authenticate(session, body.email, body.password)
-    if user is None:
+def login(body: LoginIn, session: Session = Depends(get_session)) -> TokenOut:
+    user = auth.get_user_by_email(session, body.email)
+    if user is not None and auth.is_locked(user):
+        raise HTTPException(423, "Too many failed attempts. Try again in a few minutes.")
+    if user is None or not auth.verify_password(body.password, user.password_hash):
+        if user is not None:
+            auth.record_login_failure(session, user)
         raise HTTPException(401, "Wrong email or password.")
-    return TokenOut(token=auth.make_token(user.id), email=user.email)
+
+    mfa = session.scalar(
+        select(MfaCredential).where(MfaCredential.user_id == user.id, MfaCredential.confirmed_at.isnot(None))
+    )
+    if mfa is not None:
+        ok = bool(body.totp) and auth.verify_totp(mfa.secret, body.totp)
+        if not ok and body.recovery_code and auth.consume_recovery_code(mfa, body.recovery_code):
+            ok = True
+            session.commit()
+        if not ok:
+            auth.record_login_failure(session, user)
+            detail = "MFA code required." if not (body.totp or body.recovery_code) else "Invalid MFA code."
+            raise HTTPException(401, detail)
+
+    auth.record_login_success(session, user)
+    return TokenOut(token=auth.make_token(user.id, user.token_version), email=user.email)
 
 
 @router.get("/me", response_model=MeOut)
-def me(user: User = Depends(auth.current_user)) -> MeOut:
-    return MeOut(id=user.id, email=user.email)
+def me(user: User = Depends(auth.current_user), session: Session = Depends(get_session)) -> MeOut:
+    mfa = session.scalar(
+        select(MfaCredential).where(MfaCredential.user_id == user.id, MfaCredential.confirmed_at.isnot(None))
+    )
+    return MeOut(id=user.id, email=user.email, mfa_enabled=mfa is not None)
+
+
+@router.post("/me/logout-all", response_model=LogoutAllOut)
+def logout_all(
+    user: User = Depends(auth.current_user), session: Session = Depends(get_session)
+) -> LogoutAllOut:
+    """Invalidate every outstanding session token (API keys are untouched —
+    they're a separate credential, revoked individually)."""
+    user.token_version += 1
+    session.commit()
+    return LogoutAllOut(token_version=user.token_version)
+
+
+# --- API keys ----------------------------------------------------------
+
+def _api_key_out(k: ApiKey, cls=ApiKeyOut, **extra) -> ApiKeyOut:
+    return cls(
+        id=k.id,
+        name=k.name,
+        prefix=k.prefix,
+        created_at=k.created_at.isoformat(),
+        last_used_at=k.last_used_at.isoformat() if k.last_used_at else None,
+        revoked_at=k.revoked_at.isoformat() if k.revoked_at else None,
+        **extra,
+    )
+
+
+@router.get("/me/api-keys", response_model=List[ApiKeyOut])
+def list_api_keys(
+    user: User = Depends(auth.current_user), session: Session = Depends(get_session)
+) -> List[ApiKeyOut]:
+    keys = session.scalars(select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.id))
+    return [_api_key_out(k) for k in keys]
+
+
+@router.post("/me/api-keys", response_model=ApiKeyCreatedOut)
+def create_api_key(
+    body: ApiKeyIn,
+    user: User = Depends(auth.current_user),
+    session: Session = Depends(get_session),
+) -> ApiKeyCreatedOut:
+    full, prefix, hashed = auth.generate_api_key()
+    key = ApiKey(user_id=user.id, name=body.name.strip(), prefix=prefix, hashed_key=hashed)
+    session.add(key)
+    session.commit()
+    session.refresh(key)
+    return _api_key_out(key, cls=ApiKeyCreatedOut, key=full)
+
+
+@router.delete("/me/api-keys/{key_id}")
+def revoke_api_key(
+    key_id: int, user: User = Depends(auth.current_user), session: Session = Depends(get_session)
+) -> dict:
+    key = session.get(ApiKey, key_id)
+    if key is None or key.user_id != user.id:
+        raise HTTPException(404, "API key not found.")
+    if key.revoked_at is None:
+        key.revoked_at = datetime.now(timezone.utc)
+        session.commit()
+    return {"revoked": key_id}
+
+
+# --- MFA -----------------------------------------------------------------
+
+@router.post("/me/mfa/enroll", response_model=MfaEnrollOut)
+def mfa_enroll(
+    user: User = Depends(auth.current_user), session: Session = Depends(get_session)
+) -> MfaEnrollOut:
+    """Start (or restart) enrollment: a fresh, unconfirmed secret + recovery
+    codes. Nothing is required at login until /mfa/verify confirms it."""
+    existing = session.scalar(select(MfaCredential).where(MfaCredential.user_id == user.id))
+    secret = auth.generate_totp_secret()
+    codes = auth.generate_recovery_codes()
+    hashed_codes = [auth.hash_recovery_code(c) for c in codes]
+    if existing is not None:
+        existing.secret = secret
+        existing.confirmed_at = None
+        existing.recovery_codes = hashed_codes
+    else:
+        session.add(MfaCredential(user_id=user.id, secret=secret, recovery_codes=hashed_codes))
+    session.commit()
+    otpauth = f"otpauth://totp/Lesarin:{user.email}?secret={secret}&issuer=Lesarin"
+    return MfaEnrollOut(otpauth_url=otpauth, secret=secret, recovery_codes=codes)
+
+
+@router.post("/me/mfa/verify")
+def mfa_verify(
+    body: MfaCodeIn,
+    user: User = Depends(auth.current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    mfa = session.scalar(select(MfaCredential).where(MfaCredential.user_id == user.id))
+    if mfa is None:
+        raise HTTPException(404, "No pending MFA enrollment. Call /me/mfa/enroll first.")
+    if not auth.verify_totp(mfa.secret, body.code):
+        raise HTTPException(401, "Invalid code.")
+    mfa.confirmed_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"enabled": True}
+
+
+@router.delete("/me/mfa")
+def mfa_disable(
+    body: MfaDisableIn,
+    user: User = Depends(auth.current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not auth.verify_password(body.password, user.password_hash):
+        raise HTTPException(401, "Wrong password.")
+    mfa = session.scalar(select(MfaCredential).where(MfaCredential.user_id == user.id))
+    if mfa is not None:
+        session.delete(mfa)
+        session.commit()
+    return {"enabled": False}
 
 
 # --- Canonical vocabulary (for building a profile in the UI) ---------------
@@ -338,6 +522,15 @@ async def export_invoice(
     session: Session = Depends(get_session),
 ) -> Response:
     """Upload a PDF, get it back in the customer's chosen shape and format."""
+    # Checked before anything else: a rejected upload should cost nothing.
+    retry_after = export_limiter.take(f"user:{user.id}")
+    if retry_after is not None:
+        raise HTTPException(
+            429,
+            f"Too many uploads — the limit is {_EXPORT_RATE_PER_MINUTE} per minute. "
+            f"Try again in {retry_after:.0f}s.",
+            headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
     started = time.perf_counter()
     data = await file.read()
     if not data:
