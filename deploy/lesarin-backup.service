@@ -1,0 +1,14 @@
+# Oneshot backup job, driven by lesarin-backup.timer.
+# Install to /etc/systemd/system/ (setup-server.sh does this).
+[Unit]
+Description=Back up the Lesarin database
+After=network.target
+
+[Service]
+Type=oneshot
+# Runs as root: it must read the service user's data dir and write to
+# /var/backups, and pg_dump may need the peer credentials.
+ExecStart=/bin/bash /opt/lesarin/deploy/backup.sh
+# A failure here is worth noticing — journalctl -u lesarin-backup shows why.
+StandardOutput=journal
+StandardError=journal

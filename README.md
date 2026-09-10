@@ -341,6 +341,11 @@ so a scheduler can loop on it.
 
 ### Sync the learned knowledge between sites
 
+> How this becomes a central service — what earns the right to be shared, and
+> what does (and doesn't) cross the wire — is designed in
+> [`docs/brain-sync.md`](docs/brain-sync.md).
+
+
 The "brain" — per-vendor templates plus learned field synonyms — exports as one
 JSON bundle, which is the unit that syncs to a central store every now and then:
 
