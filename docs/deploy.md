@@ -119,9 +119,51 @@ sudo systemctl status 'actions.runner.*'        # is the runner service up?
 If a deploy job sits queued forever, the runner is offline — check the last
 line above, or the Runners page in repo settings.
 
-## Scaling past SQLite
+## Schema changes
 
-The unit runs a single uvicorn worker, which keeps SQLite write-contention-free
-and is fine for a small tenant base. When you outgrow it, move `LESARIN_DB` to a
-Postgres URL and raise `--workers` — the app uses SQLAlchemy, so the data layer
-ports with minimal change.
+Alembic owns the schema. `init_db()` applies any outstanding migrations at
+startup, so a deploy needs no separate step and a fresh install needs no setup.
+
+A database created before Alembic existed — like the SQLite file already on the
+VPS — has the tables but no version row. Startup detects that and stamps it at
+the baseline revision instead of trying to recreate them, so **the existing
+database is adopted in place and no learned template is lost**.
+
+To add a migration after changing a model:
+
+```bash
+python -m alembic revision --autogenerate -m "what changed"
+# read the generated file before committing it — autogenerate is a draft
+python -m alembic upgrade head        # or just start the app
+```
+
+`tests/test_migrations.py` fails if the models and the migrations disagree, so
+a model change without a migration is caught before it reaches the server.
+
+## Moving to Postgres
+
+Set `LESARIN_DATABASE_URL` in `/etc/lesarin/lesarin.env` and the service uses
+Postgres instead of the SQLite file:
+
+```
+LESARIN_DATABASE_URL=postgresql+psycopg://lesarin:PASSWORD@localhost/lesarin
+```
+
+Then raise `--workers` in the unit — the single worker exists only to keep
+SQLite write-contention-free, and that constraint disappears with Postgres.
+Migrations run at startup exactly as before. CI runs the whole suite against
+both SQLite and a real Postgres, so the dialect difference is covered.
+
+To carry the existing data over, dump the SQLite database and load it into
+Postgres (`pgloader` handles this in one step), or — since vendor templates are
+the only irreplaceable part — export the knowledge bundle first and import it
+after:
+
+```bash
+python -m app.sync export --out brain.json     # against SQLite
+# ... point LESARIN_DATABASE_URL at Postgres, start once to create the schema
+python -m app.sync import brain.json           # into Postgres
+```
+
+SQLite remains fully supported and is still the default: the CLI, the TUI and
+self-hosted sites all use it.
