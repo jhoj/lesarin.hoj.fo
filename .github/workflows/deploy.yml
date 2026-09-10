@@ -35,6 +35,11 @@ jobs:
           npm ci
           npm run build
 
+      # --- Test the frontend (jsdom, no browser needed) ------------------
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --watch=false
+
       # --- Test the backend (deploy is gated on green) -------------------
       - name: Set up Python
         uses: actions/setup-python@v5
