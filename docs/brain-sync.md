@@ -113,6 +113,36 @@ So the mapping screen shows the detected supplier — *"Supplier: Effo (V-tal
 identity is confirmed alongside the fields, and the last real failure mode is
 covered.
 
+### Old mappings don't expire, they just stop matching
+
+A confirmed mapping stays valid indefinitely. What changes is the supplier: they
+redesign their invoice, and the mapping that was right last year is still right
+— for last year's form, which is a different layout with a different
+fingerprint. Old documents keep arriving too, from a backlog or an archive
+re-run, so throwing the old mapping away would break reads that work today.
+
+So age is a ranking rule, never an expiry rule:
+
+1. **The document's layout matches a confirmed mapping** — use it, however old
+   it is. Age doesn't matter when the shape is identical.
+2. **No layout matches** — fall back to the newest confirmed mapping for that
+   supplier. Layouts usually drift rather than get redrawn, so the newest one is
+   closest to whatever just arrived.
+
+The fallback is a guess, and a guess can be confidently wrong on a genuinely
+redesigned invoice. So a fallback read only counts as complete if validation
+passes as well — if the totals stop reconciling once the old mapping is applied
+to the new form, it goes to a person instead of to the bookkeeping system.
+
+Worth noticing what this gives the customer. A new fingerprint under a known
+V-tal has one likely cause, so the notification can say *why* rather than only
+*that*:
+
+> Effo appears to have changed their invoice layout. 3 invoices are waiting.
+
+One person confirming the new layout once fixes it for everyone who buys from
+that supplier.
+
 ### When two people disagree
 
 Two customers can confirm different answers for the same supplier. Last
@@ -221,8 +251,10 @@ fingerprint is derived from the document's structure rather than its contents:
 - page size and count bucket
 
 Hashed, that becomes a stable identifier for "this shape of document from this
-supplier". A new fingerprint under a known V-tal is a new document type, not a
-reason to replace the existing template.
+supplier". A new fingerprint under a known V-tal is either a new document type
+or a redesign — in both cases a reason to *add* a mapping, never to replace the
+existing one. Which mapping gets used for a given document is decided by the
+matching rule above: exact layout first, newest confirmed as the fallback.
 
 ## What crosses the wire
 
@@ -381,8 +413,9 @@ done.
 ## Open questions
 
 Settled above and no longer open: publishing needs no approval from the centre,
-a customer counts once however they run, and the brain only receives mappings a
-person confirmed. What's left:
+a customer counts once however they run, the brain only receives mappings a
+person confirmed, and confirmed mappings never expire — they simply stop
+matching once a supplier redesigns their form. What's left:
 
 1. **Retry budget before escalation** — attempts, elapsed days, or both.
 2. **Who is the responsible user?** Per folder, per customer, or per supplier —
@@ -393,7 +426,3 @@ person confirmed. What's left:
 4. **How long are observations kept below k?** They are hashes and counts, so
    the cost is small, but "forever" is rarely the right answer to write into a
    privacy policy.
-5. **Does a confirmed mapping expire?** A supplier redesigns their invoice and
-   an old confirmation quietly becomes wrong. Withdrawal catches it after the
-   fact; an age limit would catch it sooner, at the cost of asking people to
-   re-confirm things that are still fine.
