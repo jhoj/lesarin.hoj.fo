@@ -18,6 +18,8 @@ fields they want, renamed to their keys, in json / xml / ubl / oioubl.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
@@ -29,11 +31,12 @@ from sqlalchemy.orm import Session
 
 from . import auth, canonical, engine, exporters, repo, validation
 from .db import get_session
-from .db_models import OutputProfile, ProfileField, User
+from .db_models import ExportRecord, OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
 from .extraction import loader
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("lesarin.saas")
 
 _MAX_BYTES = 10 * 1024 * 1024
 
@@ -93,6 +96,23 @@ class CanonicalFieldOut(BaseModel):
     value_type: str
 
 
+class ExportRecordOut(BaseModel):
+    id: int
+    created_at: str
+    filename: Optional[str]
+    fmt: str
+    source: str
+    vendor_name: Optional[str]
+    invoice_no: Optional[str]
+    located: int
+    requested: int
+    missing: List[str]
+    valid: bool
+    problems: int
+    ocr_used: bool
+    duration_ms: int
+
+
 _VALID_FORMATS = {"json", "xml", "ubl", "oioubl"}
 
 
@@ -128,6 +148,44 @@ def login(body: Credentials, session: Session = Depends(get_session)) -> TokenOu
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(auth.current_user)) -> MeOut:
     return MeOut(id=user.id, email=user.email, is_staff=user.is_staff)
+
+
+# --- Export history --------------------------------------------------------
+
+@router.get("/me/exports", response_model=List[ExportRecordOut])
+def list_exports(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(auth.current_user),
+    session: Session = Depends(get_session),
+) -> List[ExportRecordOut]:
+    """What this account has put through the service, most recent first."""
+    records = session.scalars(
+        select(ExportRecord)
+        .where(ExportRecord.user_id == user.id)
+        .order_by(ExportRecord.created_at.desc(), ExportRecord.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return [
+        ExportRecordOut(
+            id=r.id,
+            created_at=r.created_at.isoformat(),
+            filename=r.filename,
+            fmt=r.fmt,
+            source=r.source,
+            vendor_name=r.vendor_name,
+            invoice_no=r.invoice_no,
+            located=r.located,
+            requested=r.requested,
+            missing=list(r.missing or []),
+            valid=r.valid,
+            problems=r.problems,
+            ocr_used=r.ocr_used,
+            duration_ms=r.duration_ms,
+        )
+        for r in records
+    ]
 
 
 # --- Canonical vocabulary (for building a profile in the UI) ---------------
@@ -335,6 +393,7 @@ async def export_invoice(
     session: Session = Depends(get_session),
 ) -> Response:
     """Upload a PDF, get it back in the customer's chosen shape and format."""
+    started = time.perf_counter()
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file.")
@@ -367,4 +426,62 @@ async def export_invoice(
         "X-Lesarin-Valid": "true" if check["valid"] else "false",
         "X-Lesarin-Problems": str(len(check["problems"])),
     }
+
+    _record_export(
+        session,
+        user=user,
+        filename=file.filename,
+        fmt=out_fmt,
+        extraction=extraction,
+        check=check,
+        profile_fields=profile_fields,
+        ocr_used=document.ocr_used,
+        duration_ms=int((time.perf_counter() - started) * 1000),
+    )
     return Response(content=rendered.body, media_type=rendered.media_type, headers=headers)
+
+
+def _record_export(
+    session: Session,
+    *,
+    user: User,
+    filename: Optional[str],
+    fmt: str,
+    extraction,
+    check: dict,
+    profile_fields,
+    ocr_used: bool,
+    duration_ms: int,
+) -> None:
+    """Leave a trace of the read. Never fails the request: the customer has
+    their data, and losing a log line is not worth turning that into a 500."""
+    values = extraction.values()
+    requested = (
+        [f["canonical"] for f in profile_fields]
+        if profile_fields
+        else list(canonical.CANONICAL_ORDER)
+    )
+    missing = [key for key in requested if values.get(key) in (None, "")]
+    try:
+        session.add(
+            ExportRecord(
+                user_id=user.id,
+                filename=filename,
+                fmt=fmt,
+                source=extraction.source,
+                vendor_identifier=extraction.vendor.identifier if extraction.vendor else None,
+                vendor_name=extraction.vendor.name if extraction.vendor else values.get("VendorName"),
+                invoice_no=values.get("InvoiceNo"),
+                located=len(requested) - len(missing),
+                requested=len(requested),
+                missing=missing,
+                valid=bool(check["valid"]),
+                problems=len(check["problems"]),
+                ocr_used=ocr_used,
+                duration_ms=duration_ms,
+            )
+        )
+        session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record export for user=%s", user.id)
+        session.rollback()

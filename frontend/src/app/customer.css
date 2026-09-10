@@ -162,3 +162,30 @@ button.danger {
 .err {
   color: #c0392b;
 }
+
+table.history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+table.history th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.history td {
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+table.history td.short {
+  color: #9a6a12;
+  font-weight: 600;
+}
+.badge.warn {
+  background: #fdf1dc;
+  color: #9a6a12;
+}

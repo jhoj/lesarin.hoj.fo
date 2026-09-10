@@ -1,8 +1,15 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from './api';
-import { CanonicalField, ExportFormat, OutputProfile, ProfilePayload } from './models';
+import {
+  CanonicalField,
+  ExportFormat,
+  ExportRecord,
+  OutputProfile,
+  ProfilePayload,
+} from './models';
 
 /** One editable row in the profile editor: a canonical field + whether it's
  *  included and what the customer wants it called in their output. */
@@ -15,7 +22,7 @@ interface FieldRow {
 
 @Component({
   selector: 'app-customer',
-  imports: [FormsModule],
+  imports: [DatePipe, FormsModule],
   templateUrl: './customer.html',
   styleUrl: './customer.css',
 })
@@ -24,6 +31,7 @@ export class Customer implements OnInit {
 
   readonly canonical = signal<CanonicalField[]>([]);
   readonly profiles = signal<OutputProfile[]>([]);
+  readonly history = signal<ExportRecord[]>([]);
 
   // Export panel state.
   readonly exportProfileId = signal<number | null>(null);
@@ -47,6 +55,7 @@ export class Customer implements OnInit {
   async ngOnInit(): Promise<void> {
     this.canonical.set(await this.api.canonicalFields());
     await this.reloadProfiles();
+    await this.reloadHistory();
   }
 
   private async reloadProfiles(): Promise<void> {
@@ -56,6 +65,10 @@ export class Customer implements OnInit {
     if (current == null || !profiles.some((p) => p.id === current)) {
       this.exportProfileId.set((profiles.find((p) => p.is_default) ?? profiles[0])?.id ?? null);
     }
+  }
+
+  private async reloadHistory(): Promise<void> {
+    this.history.set(await this.api.listExports());
   }
 
   // ---- Export -------------------------------------------------------------
@@ -92,6 +105,7 @@ export class Customer implements OnInit {
       this.lastBlob = res;
       this.output.set(res.body);
       this.status.set('Done.');
+      await this.reloadHistory();
     } catch (err: unknown) {
       this.status.set(detail(err) ?? 'Export failed.');
     } finally {

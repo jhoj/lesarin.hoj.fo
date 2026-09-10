@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import {
   CanonicalField,
   DocumentInfo,
+  ExportRecord,
   FieldSuggestion,
   Mapping,
   Me,
@@ -103,6 +104,10 @@ export class Api {
 
   updateProfile(id: number, payload: ProfilePayload): Promise<OutputProfile> {
     return firstValueFrom(this.http.put<OutputProfile>(`${BASE}/me/profiles/${id}`, payload));
+  }
+
+  listExports(limit = 20): Promise<ExportRecord[]> {
+    return firstValueFrom(this.http.get<ExportRecord[]>(`${BASE}/me/exports?limit=${limit}`));
   }
 
   deleteProfile(id: number): Promise<unknown> {

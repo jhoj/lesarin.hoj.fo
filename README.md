@@ -201,6 +201,7 @@ time too.
 | `GET /api/me` | the current account |
 | `GET /api/canonical-fields` | the fields you can put in a profile |
 | `GET/POST/PUT/DELETE /api/me/profiles[...]` | manage output profiles |
+| `GET /api/me/exports?limit=&offset=` | what this account has processed, newest first |
 | `POST /api/me/export?profile_id=&fmt=` | upload a PDF → data in your format |
 
 Auth is dependency-free: passwords are PBKDF2-hashed and tokens are HMAC-signed

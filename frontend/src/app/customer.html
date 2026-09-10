@@ -43,6 +43,44 @@
     }
   </section>
 
+  <!-- History -->
+  <section class="panel">
+    <div class="panel-head"><h2>Recent exports</h2></div>
+    @if (history().length === 0) {
+      <p class="muted small">Nothing yet — your processed invoices will be listed here.</p>
+    } @else {
+      <table class="history">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>File</th>
+            <th>Supplier</th>
+            <th>Invoice no.</th>
+            <th>Found</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (h of history(); track h.id) {
+            <tr>
+              <td class="muted">{{ h.created_at | date: 'd MMM HH:mm' }}</td>
+              <td>{{ h.filename }}</td>
+              <td>{{ h.vendor_name || '—' }}</td>
+              <td>{{ h.invoice_no || '—' }}</td>
+              <td [class.short]="h.located < h.requested">{{ h.located }}/{{ h.requested }}</td>
+              <td>
+                <span class="badge" [class.fmt]="h.source === 'template'">{{ h.source }}</span>
+                @if (!h.valid) {
+                  <span class="badge warn">{{ h.problems }} flagged</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </section>
+
   <!-- Profiles -->
   <section class="panel">
     <div class="panel-head">
