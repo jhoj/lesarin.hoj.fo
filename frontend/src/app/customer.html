@@ -38,6 +38,26 @@
       <span class="muted small">{{ status() }}</span>
     </div>
 
+    @if (quality(); as q) {
+      <div class="quality" [class.warn]="q.missing.length || !q.valid">
+        <p class="headline">{{ qualityHeadline(q) }}</p>
+        <p class="muted small">
+          Located <strong>{{ q.located }}</strong> of {{ q.total }} fields.
+          @if (q.missing.length) {
+            Not found: <span class="missing">{{ q.missing.join(', ') }}</span> — worth checking
+            these before you import the file.
+          }
+          @if (!q.valid) {
+            {{ q.problems }} consistency
+            {{ q.problems === 1 ? 'check' : 'checks' }} flagged (totals or dates don't line up).
+          }
+          @if (q.valid && !q.missing.length) {
+            Everything checked out.
+          }
+        </p>
+      </div>
+    }
+
     @if (output()) {
       <pre class="output">{{ output() }}</pre>
     }
