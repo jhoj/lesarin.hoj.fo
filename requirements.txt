@@ -20,6 +20,14 @@ alembic==1.19.2
 # Postgres driver — only used when LESARIN_DATABASE_URL points at Postgres.
 psycopg[binary]==3.3.5
 
+# --- Brain sync (site identity + central knowledge service) ----------------
+# Ed25519 keypairs + EdDSA-signed requests — this plane is deliberately
+# asymmetric-crypto-based, unlike the stdlib-only human-auth plane above.
+cryptography==50.0.1
+PyJWT==2.13.0
+# UBL/OIOUBL structural validation (app/validation/einvoice.py).
+lxml==6.1.3
+
 # --- Extraction ------------------------------------------------------------
 pdfplumber==0.11.10
 pdf2image==1.17.0

@@ -1,0 +1,137 @@
+<div class="backoffice">
+  @if (!authed()) {
+    <section class="panel auth-card">
+      <div class="panel-head"><h2>Central back-office</h2></div>
+      <p class="muted small">
+        Sign in to the central knowledge service's team account — a different
+        service from the per-tenant SaaS, so it needs its own URL and login.
+      </p>
+
+      <label>
+        Central service URL
+        <input
+          [ngModel]="centralUrl()"
+          (ngModelChange)="centralUrl.set($event)"
+          placeholder="https://central.example.com"
+        />
+      </label>
+      <label>
+        Email
+        <input type="email" [(ngModel)]="email" autocomplete="username" />
+      </label>
+      <label>
+        Password
+        <input type="password" [(ngModel)]="password" autocomplete="current-password" />
+      </label>
+      @if (mode() === 'login') {
+        <label>
+          TOTP code (if MFA is enabled)
+          <input [(ngModel)]="totp" />
+        </label>
+      } @else {
+        <label>
+          Bootstrap token
+          <input [(ngModel)]="bootstrapToken" />
+        </label>
+      }
+
+      <div class="row">
+        <button class="primary" [disabled]="busy()" (click)="signIn()">
+          {{ mode() === 'login' ? 'Sign in' : 'Create admin account' }}
+        </button>
+        <button class="ghost" type="button" (click)="mode.set(mode() === 'login' ? 'bootstrap' : 'login')">
+          {{ mode() === 'login' ? 'First time? Bootstrap' : 'Back to sign in' }}
+        </button>
+      </div>
+      @if (error()) {
+        <p class="err">{{ error() }}</p>
+      }
+    </section>
+  } @else {
+    <div class="row top-row">
+      <span class="muted small">{{ centralUrl() }}</span>
+      <button class="ghost" (click)="signOut()">Sign out</button>
+    </div>
+    @if (error()) {
+      <p class="err">{{ error() }}</p>
+    }
+    @if (notice()) {
+      <p class="notice">{{ notice() }}</p>
+    }
+
+    <!-- Sites -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Sites</h2>
+        <div class="actions">
+          <input class="note-in" [(ngModel)]="enrollmentNote" placeholder="note for a new token" />
+          <button class="ghost" (click)="mintEnrollmentToken()">Mint enrollment token</button>
+        </div>
+      </div>
+      @if (sites().length === 0) {
+        <p class="muted small">No sites enrolled yet.</p>
+      }
+      <ul class="site-list">
+        @for (s of sites(); track s.id) {
+          <li>
+            <span class="name">{{ s.name }}</span>
+            <span class="badge" [class.lo]="s.status !== 'active'">{{ s.status }}</span>
+            <span class="fp muted small">{{ s.fingerprint.slice(0, 16) }}…</span>
+            @if (s.status !== 'active') {
+              <button class="ghost" (click)="activateSite(s)">Activate</button>
+            }
+            @if (s.status !== 'revoked') {
+              <button class="danger" (click)="revokeSite(s)">Revoke</button>
+            }
+          </li>
+        }
+      </ul>
+    </section>
+
+    <!-- Published templates -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Published templates</h2>
+        <span class="muted small">Pushed already-confirmed — no approval step here.</span>
+      </div>
+      @if (templates().length === 0) {
+        <p class="muted small">Nothing pushed yet.</p>
+      }
+      <ul class="template-list">
+        @for (t of templates(); track t.id) {
+          <li>
+            <span class="name">{{ t.name }}</span>
+            <span class="v-id">{{ t.identifier }}</span>
+            <span class="muted small">v{{ t.version }} · {{ t.field_count }} field(s)</span>
+            @if (t.withdrawn) {
+              <span class="badge lo">withdrawn</span>
+            } @else {
+              <button class="danger" (click)="withdrawTemplate(t)">Withdraw</button>
+            }
+          </li>
+        }
+      </ul>
+    </section>
+
+    <!-- Shared vocabulary -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Shared vocabulary</h2>
+        <span class="muted small">A label is revealed once enough sites independently report it.</span>
+      </div>
+      @if (vocabulary().length === 0) {
+        <p class="muted small">No labels observed yet.</p>
+      }
+      <ul class="vocab-list">
+        @for (v of vocabulary(); track v.label + (v.suggested_key ?? '')) {
+          <li>
+            <span class="name">{{ v.label }}</span>
+            <span class="v-id">{{ v.suggested_key ?? '(unmapped)' }}</span>
+            <span class="muted small">{{ v.sites }} site(s)</span>
+            <span class="badge" [class.lo]="!v.revealed">{{ v.revealed ? 'revealed' : 'pending' }}</span>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+</div>

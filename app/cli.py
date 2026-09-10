@@ -136,6 +136,10 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
         status = "incomplete"
         reason = "validation failed: " + "; ".join(validation_report["problems"])
 
+    # A coarse "does this even look like an invoice" score — informational,
+    # never changes status.
+    likelihood = validation.invoice_likelihood.score(document, extraction.values(), bool(extraction.lines))
+
     body = _render(extraction, config, fmt)
     vendor = extraction.vendor
     report = {
@@ -156,6 +160,7 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
         "expected": expected,
         "missing_fields": missing,
         "validation": validation_report,
+        "invoice_likelihood": likelihood,
         "lines": [ln.as_dict() for ln in extraction.lines],
         "output": {"format": fmt, "body": body},
     }

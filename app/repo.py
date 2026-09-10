@@ -14,7 +14,7 @@ from typing import Iterable, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db_models import FieldMapping, OutputField, Vendor, VendorTemplateVersion
+from .db_models import FieldMapping, LabelObservation, OutputField, Vendor, VendorTemplateVersion
 
 logger = logging.getLogger("lesarin.repo")
 
@@ -96,6 +96,7 @@ def _apply_mappings(vendor: Vendor, mappings: Iterable[dict]) -> None:
                 top=top,
                 x1=x1,
                 bottom=bottom,
+                confirmed=bool(m.get("confirmed", False)),
             )
         )
 
@@ -112,9 +113,17 @@ def mappings_of(vendor: Vendor) -> List[dict]:
             "value_type": m.value_type,
             "page": m.page,
             "bbox": m.bbox,
+            "confirmed": m.confirmed,
         }
         for m in vendor.mappings
     ]
+
+
+def confirmed_mappings_of(vendor: Vendor) -> List[dict]:
+    """Only the fields a person actually confirmed — what's eligible to push
+    to the central brain (docs/brain-sync.md: "the brain only ever receives
+    mappings a human confirmed")."""
+    return [m for m in mappings_of(vendor) if m["confirmed"]]
 
 
 def record_version(
@@ -299,3 +308,33 @@ def detect_vendor(session: Session, text: str) -> Optional[Vendor]:
             if kw and kw.lower() in lowered:
                 return vendor
     return None
+
+
+# ---- Label observations (queued for the next central push) ----------------
+
+def add_label_observation(
+    session: Session,
+    identifier: Optional[str],
+    layout_fingerprint: str,
+    label_set: List[str],
+    positions: List[dict],
+) -> LabelObservation:
+    obs = LabelObservation(
+        identifier=identifier, layout_fingerprint=layout_fingerprint,
+        label_set=label_set, positions=positions,
+    )
+    session.add(obs)
+    session.commit()
+    return obs
+
+
+def list_label_observations(session: Session) -> List[LabelObservation]:
+    return list(session.scalars(select(LabelObservation)))
+
+
+def clear_label_observations(session: Session) -> int:
+    observations = list_label_observations(session)
+    for obs in observations:
+        session.delete(obs)
+    session.commit()
+    return len(observations)

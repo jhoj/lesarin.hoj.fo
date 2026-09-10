@@ -91,6 +91,10 @@ class MappingIn(BaseModel):
     value_type: ValueType = "string"
     page: Optional[int] = None
     bbox: Optional[List[float]] = None  # [x0, top, x1, bottom] in PDF points
+    # A human confirmed this specific field (docs/brain-sync.md). Set by the
+    # server, not the client — see app/api.py's staff-only vendor endpoints —
+    # so it defaults False and a caller can't just claim confirmation.
+    confirmed: bool = False
 
 
 class VendorIn(BaseModel):

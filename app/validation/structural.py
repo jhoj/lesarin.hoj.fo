@@ -23,13 +23,27 @@ from __future__ import annotations
 from datetime import date
 from typing import Dict, List, Optional
 
-from .exporters import CanonicalLine
-from .extraction.template import _normalise_number
+from ..exporters import CanonicalLine
+from ..extraction.template import _normalise_number
 
 # Rounding slack: per-line øre/cent rounding accumulates, so allow a few cents.
 _TOLERANCE = 0.05
 
 _ISO_CURRENCIES = {"DKK", "ISK", "EUR", "USD", "NOK", "SEK", "GBP"}
+
+# Modulus-11 check digit weights for an 8-digit Danish CVR / Faroese V-tal —
+# the Faroe Islands historically shares Denmark's business-registry numbering.
+# Best-effort: undocumented publicly for V-tal specifically, so this is a soft
+# check (only run, never fails a "complete" status on its own).
+_CVR_WEIGHTS = [2, 7, 6, 5, 4, 3, 2, 1]
+
+
+def vtal_checksum_ok(digits: str) -> Optional[bool]:
+    """Modulus-11 check on an 8-digit V-tal/CVR. None if not applicable."""
+    if len(digits) != 8 or not digits.isdigit():
+        return None
+    total = sum(int(d) * w for d, w in zip(digits, _CVR_WEIGHTS))
+    return total % 11 == 0
 
 
 def _num(value: Optional[str]) -> Optional[float]:
@@ -83,6 +97,13 @@ def validate(values: Dict[str, Optional[str]], lines: List[CanonicalLine]) -> di
         _check(checks, "vendor_number_shape", ok,
                f"vendor number '{vendor_no}' has {len(digits)} digits"
                + ("" if ok else " (expected 4–12)"))
+        checksum = vtal_checksum_ok(digits)
+        if checksum is not None:
+            # Informational only (undocumented algorithm for V-tal specifically) —
+            # never demotes a "complete" status on its own.
+            checks.append({"check": "vtal_checksum", "ok": checksum, "detail":
+                            f"CVR/V-tal modulus-11 check {'passed' if checksum else 'failed'}",
+                            "informational": True})
 
     # -- arithmetic ----------------------------------------------------------
     if net is not None and vat is not None and gross is not None:
@@ -113,5 +134,5 @@ def validate(values: Dict[str, Optional[str]], lines: List[CanonicalLine]) -> di
         ok = code in _ISO_CURRENCIES or (len(code) == 3 and code.isalpha())
         _check(checks, "currency_code", ok, f"currency '{currency}'")
 
-    problems = [c["detail"] for c in checks if not c["ok"]]
+    problems = [c["detail"] for c in checks if not c["ok"] and not c.get("informational")]
     return {"valid": not problems, "checks": checks, "problems": problems}
