@@ -1,4 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
@@ -9,6 +10,7 @@ import {
   ApiKeyOut,
   CanonicalField,
   ExportFormat,
+  ExportRecord,
   ExportQuality,
   Me,
   MfaEnrollOut,
@@ -27,7 +29,7 @@ interface FieldRow {
 
 @Component({
   selector: 'app-customer',
-  imports: [FormsModule],
+  imports: [DatePipe, FormsModule],
   templateUrl: './customer.html',
   styleUrl: './customer.css',
 })
@@ -38,6 +40,7 @@ export class Customer implements OnInit {
 
   readonly canonical = signal<CanonicalField[]>([]);
   readonly profiles = signal<OutputProfile[]>([]);
+  readonly history = signal<ExportRecord[]>([]);
 
   // Security panel state.
   readonly me = signal<Me | null>(null);
@@ -73,6 +76,7 @@ export class Customer implements OnInit {
   async ngOnInit(): Promise<void> {
     this.canonical.set(await this.api.canonicalFields());
     await this.reloadProfiles();
+    await this.reloadHistory();
     await this.reloadSecurity();
   }
 
@@ -83,6 +87,10 @@ export class Customer implements OnInit {
     if (current == null || !profiles.some((p) => p.id === current)) {
       this.exportProfileId.set((profiles.find((p) => p.is_default) ?? profiles[0])?.id ?? null);
     }
+  }
+
+  private async reloadHistory(): Promise<void> {
+    this.history.set(await this.api.listExports());
   }
 
   // ---- Export -------------------------------------------------------------
@@ -121,6 +129,7 @@ export class Customer implements OnInit {
       this.output.set(res.body);
       this.quality.set(res.quality);
       this.status.set('Done.');
+      await this.reloadHistory();
     } catch (err: unknown) {
       this.status.set(detail(err) ?? 'Export failed.');
     } finally {

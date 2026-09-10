@@ -204,6 +204,7 @@ time too.
 | `POST /api/me/mfa/enroll` · `POST /api/me/mfa/verify` · `DELETE /api/me/mfa` | enable/confirm/disable TOTP two-factor auth (password required to disable) |
 | `GET /api/canonical-fields` | the fields you can put in a profile |
 | `GET/POST/PUT/DELETE /api/me/profiles[...]` | manage output profiles |
+| `GET /api/me/exports?limit=&offset=` | what this account has processed, newest first |
 | `POST /api/me/export?profile_id=&fmt=` | upload a PDF → data in your format |
 
 Auth is dependency-free: passwords are PBKDF2-hashed, tokens are HMAC-signed,

@@ -115,6 +115,39 @@ class ProfileField(Base):
     profile: Mapped["OutputProfile"] = relationship(back_populates="fields")
 
 
+class ExportRecord(Base):
+    """One row per invoice a customer put through the service.
+
+    Metadata only — never the document, and never the values read out of it,
+    beyond the invoice number needed to recognise the same invoice arriving
+    twice. That's enough to answer "what did we process last month", to meter
+    usage, and to see whether the shared templates are getting better, without
+    holding customer documents we don't need.
+    """
+
+    __tablename__ = "export_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
+
+    filename: Mapped[Optional[str]] = mapped_column(String(256), default=None)
+    fmt: Mapped[str] = mapped_column(String(16), default="json")
+
+    # How the read was made, and how well it went.
+    source: Mapped[str] = mapped_column(String(16), default="none")  # template|heuristic|none
+    vendor_identifier: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
+    vendor_name: Mapped[Optional[str]] = mapped_column(String(256), default=None)
+    invoice_no: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    located: Mapped[int] = mapped_column(default=0)
+    requested: Mapped[int] = mapped_column(default=0)
+    missing: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    valid: Mapped[bool] = mapped_column(default=True)
+    problems: Mapped[int] = mapped_column(default=0)
+    ocr_used: Mapped[bool] = mapped_column(default=False)
+    duration_ms: Mapped[int] = mapped_column(default=0)
+
+
 class Vendor(Base):
     """A known supplier and how to recognise it in an uploaded PDF."""
 

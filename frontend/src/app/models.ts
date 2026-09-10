@@ -172,6 +172,24 @@ export interface ProfilePayload {
   fields: ProfileField[];
 }
 
+/** One row of the account's export history. */
+export interface ExportRecord {
+  id: number;
+  created_at: string;
+  filename: string | null;
+  fmt: string;
+  source: 'template' | 'heuristic' | 'none';
+  vendor_name: string | null;
+  invoice_no: string | null;
+  located: number;
+  requested: number;
+  missing: string[];
+  valid: boolean;
+  problems: number;
+  ocr_used: boolean;
+  duration_ms: number;
+}
+
 /** How an export went, read back from the X-Lesarin-* response headers. */
 export interface ExportQuality {
   /** 'template' = a saved vendor mapping was applied, 'heuristic' = best-effort. */
