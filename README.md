@@ -245,7 +245,9 @@ audiences, as routed views behind a login:
   viewer + drag-box wizard) for teaching the central mappings.
 
 Vendor templates are shared: teaching one changes what *every* customer's
-extraction returns. So the studio and the `/api` endpoints behind it are
+extraction returns. Every change keeps a snapshot, so a careless edit — or a
+deletion — can be put back (`GET /api/vendors/{id}/versions`, then
+`POST /api/vendor-versions/{version_id}/restore`). So the studio and the `/api` endpoints behind it are
 restricted to staff accounts, and customers never see them. Promote an account
 from the server after it has registered:
 

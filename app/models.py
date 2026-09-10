@@ -110,6 +110,20 @@ class VendorOut(BaseModel):
     mappings: List[MappingIn] = PydField(default_factory=list)
 
 
+class TemplateVersionOut(BaseModel):
+    """One snapshot of a vendor template, for the history view."""
+
+    id: int
+    version: int
+    identifier: str
+    name: str
+    change: str  # created | updated | deleted | restored | learned
+    changed_by_user_id: Optional[int] = None
+    created_at: str
+    mappings: List[MappingIn] = PydField(default_factory=list)
+    live: bool  # False once the vendor this belonged to was deleted
+
+
 class TemplateIn(BaseModel):
     """The (possibly unsaved) set of mappings the editor wants applied now."""
 

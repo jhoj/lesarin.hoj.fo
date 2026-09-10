@@ -36,6 +36,7 @@ from .models import (
     ReadResult,
     SuggestFieldsResult,
     TemplateIn,
+    TemplateVersionOut,
     VendorIn,
     VendorOut,
 )
@@ -46,6 +47,20 @@ logger = logging.getLogger("lesarin.studio")
 
 _MAX_BYTES = 10 * 1024 * 1024
 _CONFIG = field_extractor.load_config()
+
+
+def _version_out(v) -> "TemplateVersionOut":
+    return TemplateVersionOut(
+        id=v.id,
+        version=v.version,
+        identifier=v.identifier,
+        name=v.name,
+        change=v.change,
+        changed_by_user_id=v.changed_by_user_id,
+        created_at=v.created_at.isoformat(),
+        mappings=[MappingIn(**m) for m in (v.mappings or [])],
+        live=v.vendor_id is not None,
+    )
 
 
 def _vendor_out(v: Vendor) -> VendorOut:
@@ -230,7 +245,7 @@ def get_vendor(
 def create_vendor(
     body: VendorIn,
     session: Session = Depends(get_session),
-    _staff: User = Depends(auth.current_staff),
+    staff: User = Depends(auth.current_staff),
 ) -> VendorOut:
     v = repo.create_vendor(
         session,
@@ -239,6 +254,7 @@ def create_vendor(
         identifier_kind=body.identifier_kind,
         match_keywords=body.match_keywords,
         mappings=[m.model_dump() for m in body.mappings],
+        created_by_user_id=staff.id,
     )
     return _vendor_out(v)
 
@@ -248,7 +264,7 @@ def update_vendor(
     vendor_id: int,
     body: VendorIn,
     session: Session = Depends(get_session),
-    _staff: User = Depends(auth.current_staff),
+    staff: User = Depends(auth.current_staff),
 ) -> VendorOut:
     v = repo.update_vendor(
         session,
@@ -257,6 +273,7 @@ def update_vendor(
         name=body.name,
         match_keywords=body.match_keywords,
         mappings=[m.model_dump() for m in body.mappings],
+        changed_by_user_id=staff.id,
     )
     if v is None:
         raise HTTPException(404, "Vendor not found.")
@@ -267,9 +284,9 @@ def update_vendor(
 def delete_vendor(
     vendor_id: int,
     session: Session = Depends(get_session),
-    _staff: User = Depends(auth.current_staff),
+    staff: User = Depends(auth.current_staff),
 ) -> dict:
-    if not repo.delete_vendor(session, vendor_id):
+    if not repo.delete_vendor(session, vendor_id, deleted_by_user_id=staff.id):
         raise HTTPException(404, "Vendor not found.")
     return {"deleted": vendor_id}
 
@@ -314,3 +331,41 @@ async def extract_with_template(
             fields_total=len(located),
         ),
     )
+
+
+# ---- Template history -----------------------------------------------------
+
+@router.get("/vendors/{vendor_id}/versions", response_model=List[TemplateVersionOut])
+def list_vendor_versions(
+    vendor_id: int,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> List[TemplateVersionOut]:
+    vendor = repo.get_vendor(session, vendor_id)
+    if vendor is None:
+        raise HTTPException(404, "Vendor not found.")
+    return [_version_out(v) for v in repo.list_versions(session, vendor.identifier)]
+
+
+@router.get("/vendor-versions", response_model=List[TemplateVersionOut])
+def list_versions_by_identifier(
+    identifier: str,
+    session: Session = Depends(get_session),
+    _staff: User = Depends(auth.current_staff),
+) -> List[TemplateVersionOut]:
+    """History by V-tal rather than by row id — the way to find the template of
+    a vendor that has since been deleted."""
+    return [_version_out(v) for v in repo.list_versions(session, identifier)]
+
+
+@router.post("/vendor-versions/{version_id}/restore", response_model=VendorOut)
+def restore_vendor_version(
+    version_id: int,
+    session: Session = Depends(get_session),
+    staff: User = Depends(auth.current_staff),
+) -> VendorOut:
+    """Put a snapshot back. Recreates the vendor if it was deleted."""
+    vendor = repo.restore_version(session, version_id, user_id=staff.id)
+    if vendor is None:
+        raise HTTPException(404, "No such template version.")
+    return _vendor_out(vendor)
