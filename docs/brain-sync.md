@@ -33,7 +33,8 @@ out of another. From inside, one document moves like this:
   │  otherwise         → layout heuristics             │
   └────────────────────────────────────────────────────┘
         │
-        ├─ complete + reconciles ──► outbox/faktura.xml ──► contribute (see below)
+        ├─ complete ──► outbox/faktura.xml
+        │                 (fields a person confirmed ──► contribute)
         │
         └─ incomplete ──► stays queued
                               │
@@ -56,64 +57,79 @@ most convincing thing this product does.
 The retry cadence is a per-customer setting (a cron expression). The pull is
 incremental — only what changed since that site's last sync.
 
-## Contributing: success is not the same as correct
+## Contributing: a person confirms it, or it doesn't travel
 
-**This is the rule everything else hangs off.** The heuristics can fill every
-requested field and still be wrong: take the buyer's V-tal instead of the
-supplier's, read a delivery date as the invoice date, pick a subtotal as the
-total. Today that produces one customer's slightly-wrong export, which they
-notice and fix. If every success is pushed to the brain, that same mistake is
-handed to every other customer with full confidence, and nobody can tell where
-it came from. **A brain that propagates confident errors is worse than no brain
-at all.**
+Every vendor invoice gets looked at by a person at least once, and some of its
+fields get mapped by hand. That single fact decides the whole sharing model:
+**the brain only ever receives mappings a human confirmed.**
 
-So a conversion earning the right to be *contributed* is a higher bar than
-producing output:
+The parser can be confidently wrong in ways nothing catches. The usual one: it
+finds a V-tal on the page and files the template under it, but the number it
+found was the customer's own from the letterhead, not the supplier's. Every
+field is filled. Nothing complains. Shared automatically, that reads every one
+of that supplier's invoices wrong for everybody, and it looks authoritative
+because it came from the centre. A person mapping the field is what rules that
+out — and the incentive is right, because the data lands in their own books.
 
-| Signal | Where it comes from | Why it matters |
-| --- | --- | --- |
-| Every requested field located | `engine.CanonicalExtraction` | A partial read says nothing about the layout |
-| Arithmetic reconciles | `app/validation.py` — net + VAT = gross, lines sum to total | A wrong total field almost always breaks the sum. This is the strongest cheap signal available |
-| Dates sane | `validation.py` — due not before issue | Catches the classic date-column mix-up |
-| Vendor identified | V-tal located and shaped correctly | A mapping filed under the wrong supplier poisons two vendors at once |
+### Trust belongs to a field, not to a template
 
-A read that clears all four is a **candidate mapping**. A read that doesn't
-still contributes a *layout observation* (see the fingerprint below), because
-knowing that a layout exists is useful even when the reading of it wasn't
-trusted — but it never becomes a template anyone else receives.
+A person maps *some* fields, not all of them. A template where four fields were
+confirmed and six were guessed is four answers and six guesses, and publishing
+it whole would ship the guesses as though someone had checked them.
 
-### Getting published
+So provenance is per field:
 
-Candidates do not go straight into circulation:
+| Field mapping | Where it goes |
+| --- | --- |
+| Confirmed by a person in the mapping screen | Published to the brain |
+| Filled in by the parser, nobody looked | Stays on that site. Never contributed |
 
-| State | How it gets there | Who receives it |
-| --- | --- | --- |
-| `seen once` | one customer produced it | only that customer |
-| `agreed` | a second customer produced the same mapping | everyone, automatically |
-| `checked` | a human at the centre looked at it | everyone |
-| `withdrawn` | superseded, or it started producing bad reads | nobody; kept for audit |
+A guessed field earns its way out the first time somebody confirms it. Until
+then it is a local convenience, which is exactly what it should be.
 
-**Publishing is automatic once two customers agree. No human has to approve
-anything.** That is the whole point: if every new supplier in the country waits
-for one person to review it, that person is the product's ceiling. Human review
-(`checked`) exists as a way to fix or bless something deliberately, never as a
-step the flow waits on.
+This is why there is no counting, no threshold and no waiting for a second
+customer to agree: confirmation happens once, at the customer, by the person
+who cares most whether it's right. Nobody at the centre has to approve
+anything, and nobody is a bottleneck.
 
-Two customers agreeing is strong evidence: different invoices from the same
-supplier, and the same mapping worked for both. One customer agreeing with
-itself is not evidence, so the second must be a different customer.
+### What this means for auto-learning
 
-**A customer counts once, wherever they run.** Hosted or installed on their own
-server, one customer is one voice. Counting deployments instead would let a
-single customer with three installations publish to everyone on their own, and
-would make the hosted service — where most customers will be — count as one.
+`app/saas.py:_maybe_learn_vendor` currently learns a template the first time an
+unknown supplier is uploaded, with no person involved. That's the unsupervised
+path, and it should stay — it's what makes a brand-new supplier produce
+something useful on the first read. But what it produces is **unconfirmed**:
+useful locally, never contributed. It earns its way to the brain when a person
+looks at it.
 
-"The same mapping" means the same field resolved by the same strategy to the
-same label, or to a region within a small tolerance — not byte-identical JSON.
+### Confirm the supplier, not only the fields
 
-A customer's own teaching always beats an incoming template, which is already
-how [`app/sync.py`](../app/sync.py) merges bundles. Nothing the centre publishes
-can silently overwrite a mapping someone fixed by hand.
+Someone mapping fields is looking at boxes, not auditing the V-tal at the top of
+the page. That leaves one hole a human in the loop doesn't close: a perfectly
+confirmed template filed under the wrong company, which corrupts two suppliers
+at once.
+
+So the mapping screen shows the detected supplier — *"Supplier: Effo (V-tal
+314188)"* — where it can't be missed, with an obvious way to correct it. Then
+identity is confirmed alongside the fields, and the last real failure mode is
+covered.
+
+### When two people disagree
+
+Two customers can confirm different answers for the same supplier. Last
+confirmation wins for that layout, the previous one stays in
+`vendor_template_versions` so nothing is lost, and the disagreement is worth a
+quiet flag — not to block anything, only as a signal that one of those
+suppliers deserves a look. A customer's own teaching always beats an incoming
+template regardless, which is already how [`app/sync.py`](../app/sync.py)
+merges.
+
+### Withdrawing
+
+Publishing is reversible. Export history records, per read, whether a template
+was applied and whether the result reconciled. A published template whose reads
+start failing validation across customers is evidence the supplier changed
+their layout: withdraw it, and let the next confirmation replace it. Because
+every change is versioned, withdrawing is a rollback rather than a loss.
 
 ## Two kinds of knowledge
 
@@ -160,6 +176,35 @@ This is the same reasoning as the rest of the privacy contract, applied one
 level down: the centre gets to learn what the language of invoices looks like,
 and never gets to hold a phrase only one customer has ever seen.
 
+
+### A third kind: what customers do with the data
+
+There is one more thing worth collecting, and it comes from the same screen.
+After the fields are mapped, the customer picks which of them they actually
+want and what to call them in the output.
+
+**Which fields they want** tells you what the market uses. If nobody ever asks
+for `Currency` and everybody wants `AccountNo`, that decides extraction
+priorities and the canonical vocabulary by evidence instead of guesswork.
+
+**What they rename them to** is the more interesting half. Those names aren't
+yours and aren't the supplier's — they are the vocabulary of *the bookkeeping
+system on the other side*. If a dozen customers all rename `InvoiceNo` to
+`Bilagsnr`, they are almost certainly importing into the same accounting
+package. Which gives you two things:
+
+- **Presets.** A new customer picks their accounting system from a list instead
+  of naming ten fields by hand. That removes the last piece of configuration
+  the product asks of anyone.
+- **Which integration to build next.** The most common output shape names the
+  system that deserves a direct API rather than a file drop.
+
+Output names get the same k-threshold as labels, and for the same reason: one
+customer might name a field `inv_no_kommuna_fin`, which is their business and
+nobody else's. Hashed with a count until k customers use the identical name for
+the identical field, at which point it is a convention rather than a private
+detail.
+
 ## Matching: one V-tal is not one layout
 
 A supplier sends invoices, credit notes and statements under a single V-tal,
@@ -192,6 +237,7 @@ true, and checkable.
 | Which field a label maps to (when known), and its type | The customer's identity, or which customer contributed |
 | Layout fingerprint hash | File names, folder paths |
 | How many customers have seen the same thing | Anything typed by a person into the studio as free text |
+| Which canonical fields a customer selects, and the names they map them to (hashed until k customers use the same one) | Which customer selected them |
 
 The principle: **the centre learns the shape of a supplier's form, never the
 contents of anyone's invoice.** A supplier's blank form is not personal data and
@@ -219,8 +265,8 @@ customers; we never send, store or share the contents of your invoices.*
 contributing still receives published templates. This is deliberate: it removes
 the only real objection during procurement, and it costs nothing — serving a
 template that already exists has no marginal cost, while an opt-out customer
-still generates the agreement that makes the brain trustworthy. Reciprocity
-sounds fair and would buy nothing.
+still confirms mappings that make the brain worth having. Reciprocity sounds
+fair and would buy nothing.
 
 ## Identity
 
@@ -232,9 +278,10 @@ registered centrally and activated by an admin, and every sync request carries a
 short-lived token signed with the private key. Revoking a site is flipping one
 row.
 
-Agreement is counted per **customer**, not per installation — a customer with
-three servers still has one voice — and only active, enrolled sites can push at
-all. Together that stops anyone manufacturing agreement with themselves.
+Only active, enrolled sites can push at all, so a stranger who finds the
+endpoint cannot write into the brain. Where a count is kept — the label
+vocabulary and the output-name presets below — it counts **customers**, not
+installations: a customer running three servers is still one voice.
 
 ## When it can't be read at all
 
@@ -282,9 +329,9 @@ into is not worth building.
 **Stage D — accumulate, still publishing nothing.**
 Sites push label observations and fingerprints on the schedule. The centre
 counts. Nothing flows back yet, so nothing can break a customer's reads. Run it
-long enough to answer the empirical questions: how many customers does it take
-before a label crosses k, how often do two customers actually agree on a
-supplier, is the threshold of two right for a country this size.
+long enough to answer the empirical question the thresholds depend on: how many
+customers does it take before a label crosses k, and does k = 5 leave the
+vocabulary too thin in a country this size.
 
 **Stage E — publish the vocabulary.**
 Push the learned label vocabulary back to sites. This is the highest value for
@@ -294,9 +341,9 @@ corrupting a specific supplier's template. It is also the stage that proves the
 round trip end to end while the stakes are still low.
 
 **Stage F — publish templates.**
-Per-vendor mappings, with the complete-and-reconciles gate and the two-customer
-agreement rule. This is the one that can hand a confident error to everyone, so
-it goes last of the publishing stages, on top of machinery already proven by E.
+Per-vendor mappings, confirmed field by field by a person at the customer. This
+is the one that can hand a wrong answer to everyone, so it goes last of the
+publishing stages, on machinery already proven by E.
 
 **Stage G — keep it honest.**
 Withdrawal, driven by export history: watch published templates for reads that
@@ -323,8 +370,9 @@ risking one customer's numbers on another's mistake.
 | **Site identity and enrollment** | not built |
 | **Layout fingerprints** | not built |
 | **Harvesting all label-shaped tokens** | not built — the parser finds them, but only keeps what it can map |
+| **Marking a field as human-confirmed** | not built — the studio saves mappings, but doesn't record who decided them |
 | **Learned label vocabulary** | partly — `labels.yaml` and `OutputField.aliases` exist, but are maintained by hand |
-| **Counting agreement, publishing, withdrawing** | not built |
+| **Per-field provenance, publishing, withdrawing** | not built |
 | **Scheduled pull/push, give-up rule, notification** | not built |
 
 The bottom half is the work. The top half is most of the hard thinking already
@@ -332,17 +380,20 @@ done.
 
 ## Open questions
 
-Two of the original five are now decided and written up above: publishing is
-automatic on agreement with no human in the path, and a customer counts once
-however they run. What's left:
+Settled above and no longer open: publishing needs no approval from the centre,
+a customer counts once however they run, and the brain only receives mappings a
+person confirmed. What's left:
 
-1. **Agreement threshold.** Two customers, or three? Two is written above and is
-   probably right while the customer base is small — in a country this size a
-   third customer for the same supplier may be a long wait. It can be raised
-   later without changing anything else.
-2. **Retry budget before escalation** — attempts, elapsed days, or both.
-3. **Who is the responsible user?** Per folder, per customer, or per supplier —
+1. **Retry budget before escalation** — attempts, elapsed days, or both.
+2. **Who is the responsible user?** Per folder, per customer, or per supplier —
    this decides the shape of the notification settings.
-4. **How long are label observations kept below the retention threshold?** They
-   are hashes and counts, so the cost is small, but "forever" is rarely the
-   right answer to write in a privacy policy.
+3. **k for the vocabulary and the output-name presets.** Five is written above
+   as a starting point, chosen for caution rather than from evidence. Stage D
+   exists to replace it with a real number.
+4. **How long are observations kept below k?** They are hashes and counts, so
+   the cost is small, but "forever" is rarely the right answer to write into a
+   privacy policy.
+5. **Does a confirmed mapping expire?** A supplier redesigns their invoice and
+   an old confirmation quietly becomes wrong. Withdrawal catches it after the
+   fact; an age limit would catch it sooner, at the cost of asking people to
+   re-confirm things that are still fine.
