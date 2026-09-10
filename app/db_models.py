@@ -58,8 +58,22 @@ class User(Base):
     # returns, so this is the line between the two audiences.
     is_staff: Mapped[bool] = mapped_column(default=False)
 
+    # Bumped to invalidate every outstanding session token at once ("log out
+    # everywhere"). Checked against a token's own `tv` claim, not stored in it.
+    token_version: Mapped[int] = mapped_column(default=0)
+    # Login lockout: consecutive failures reset on success; enough of them
+    # locks the account for a cooldown window instead of allowing more guesses.
+    failed_login_count: Mapped[int] = mapped_column(default=0)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(default=None)
+
     profiles: Mapped[List["OutputProfile"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", order_by="OutputProfile.id"
+    )
+    api_keys: Mapped[List["ApiKey"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", order_by="ApiKey.id"
+    )
+    mfa: Mapped[Optional["MfaCredential"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -238,3 +252,42 @@ class FieldMapping(Base):
         if None in (self.x0, self.top, self.x1, self.bottom):
             return None
         return [self.x0, self.top, self.x1, self.bottom]
+
+
+class ApiKey(Base):
+    """A credential for automation clients — an alternative to a session
+    token that isn't tied to a human login (and so isn't touched by MFA or
+    logout-everywhere). Only the hash is stored; the plaintext key is shown
+    once, at creation."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    prefix: Mapped[str] = mapped_column(String(16), index=True)  # safe to display/list by
+    hashed_key: Mapped[str] = mapped_column(String(64))  # sha256 hex of the full key
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+
+    user: Mapped["User"] = relationship(back_populates="api_keys")
+
+
+class MfaCredential(Base):
+    """A user's TOTP second factor. Unconfirmed until the enrollment code is
+    verified — that's what actually requires it at login."""
+
+    __tablename__ = "mfa_credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    secret: Mapped[str] = mapped_column(String(64))  # base32
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+    # One-time recovery codes, stored as sha256 hashes; consumed on use.
+    recovery_codes: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    user: Mapped["User"] = relationship(back_populates="mfa")

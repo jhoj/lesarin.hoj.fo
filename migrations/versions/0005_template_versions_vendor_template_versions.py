@@ -1,7 +1,7 @@
 """Add vendor_template_versions — history and rollback for shared templates
 
-Revision ID: 0004_template_versions
-Revises: 0003_export_history
+Revision ID: 0005_template_versions
+Revises: 0004_export_history
 Create Date: 2026-09-10 07:23:15.931138
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0004_template_versions'
-down_revision = '0003_export_history'
+revision = '0005_template_versions'
+down_revision = '0004_export_history'
 branch_labels = None
 depends_on = None
 

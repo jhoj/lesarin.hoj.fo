@@ -1,7 +1,7 @@
 """Add password_reset_tokens — one-time, short-lived reset tickets
 
-Revision ID: 0005_password_reset
-Revises: 0004_template_versions
+Revision ID: 0006_password_reset
+Revises: 0005_template_versions
 Create Date: 2026-09-10 07:26:27.189113
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0005_password_reset'
-down_revision = '0004_template_versions'
+revision = '0006_password_reset'
+down_revision = '0005_template_versions'
 branch_labels = None
 depends_on = None
 
