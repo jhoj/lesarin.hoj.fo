@@ -74,6 +74,10 @@ Three credential types, one new central service, four validation layers.
   separate from the stdlib-only human-auth plane.)
 
 ### M3 — Central knowledge service + sync  [`central/` FastAPI app, own DB]
+
+> The flow, the promotion rule and the privacy contract for this milestone are
+> settled in [`brain-sync.md`](brain-sync.md). Read that first.
+
 - Separate deployable (same repo, own SQLite/Postgres). Schema:
   `VendorKnowledge` (canonical template, **versioned**, `status:
   unverified|verified|published`, confidence, provenance = contributing
