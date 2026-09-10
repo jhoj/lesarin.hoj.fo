@@ -198,6 +198,7 @@ time too.
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/auth/register` · `POST /api/auth/login` | email + password (+ `totp`/`recovery_code` if 2FA is on) → bearer token |
+| `POST /api/auth/forgot-password` · `POST /api/auth/reset-password` | email a one-time reset link, then set a new password |
 | `GET /api/me` | the current account |
 | `POST /api/me/logout-all` | invalidate every outstanding session token ("log out everywhere") |
 | `GET/POST /api/me/api-keys` · `DELETE /api/me/api-keys/{id}` | issue/list/revoke API keys for automation (`Authorization: Bearer lk_...`, works anywhere a session token does) |

@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import DB_PATH, get_session
-from .db_models import ApiKey, MfaCredential, User
+from .db_models import ApiKey, MfaCredential, PasswordResetToken, User
 
 # --- Secret used to sign tokens -------------------------------------------
 
@@ -157,6 +157,67 @@ def authenticate(session: Session, email: str, password: str) -> Optional[User]:
     return user
 
 
+# --- Password reset --------------------------------------------------------
+
+_RESET_TTL_MINUTES = 60
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_reset_token(session: Session, user: User) -> str:
+    """Issue a reset ticket, returning the plaintext to email exactly once.
+
+    Any earlier unused ticket for the account is spent at the same time, so a
+    second "forgot password" click invalidates the first link — otherwise an
+    old message in a mailbox stays live for its full hour.
+    """
+    now = datetime.now(timezone.utc)
+    outstanding = session.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None)
+        )
+    )
+    for old in outstanding:
+        old.used_at = now
+
+    token = secrets.token_urlsafe(32)
+    session.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash_reset_token(token),
+            expires_at=now + timedelta(minutes=_RESET_TTL_MINUTES),
+        )
+    )
+    session.commit()
+    return token
+
+
+def redeem_reset_token(session: Session, token: str, new_password: str) -> Optional[User]:
+    """Spend a ticket and set the new password. None if it isn't usable."""
+    if not token:
+        return None
+    record = session.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == _hash_reset_token(token))
+    )
+    if record is None or record.used_at is not None:
+        return None
+
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:  # SQLite hands these back naive; they're UTC
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
+        return None
+
+    user = session.get(User, record.user_id)
+    if user is None:
+        return None
+
+    user.password_hash = hash_password(new_password)
+    record.used_at = datetime.now(timezone.utc)
+    session.commit()
+    return user
 # --- Login lockout -----------------------------------------------------
 
 _MAX_LOGIN_FAILURES = 5

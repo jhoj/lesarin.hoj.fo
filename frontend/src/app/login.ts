@@ -54,6 +54,15 @@ import { Auth } from './auth';
         @if (error()) {
           <p class="err" role="alert">{{ error() }}</p>
         }
+        @if (notice()) {
+          <p class="notice" role="status">{{ notice() }}</p>
+        }
+
+        @if (mode() === 'login') {
+          <p class="muted small">
+            <a href="#" (click)="forgotPassword($event)">Forgot your password?</a>
+          </p>
+        }
 
         <p class="muted small switch">
           {{ mode() === 'login' ? 'No account yet?' : 'Already have an account?' }}
@@ -99,6 +108,11 @@ import { Auth } from './auth';
         color: #c0392b;
         margin: 0;
       }
+      .notice {
+        color: var(--good, #1f7a44);
+        margin: 0;
+        font-size: 0.85rem;
+      }
       .switch a,
       .auth-card a {
         color: var(--accent);
@@ -114,6 +128,7 @@ export class Login {
   readonly mode = signal<'login' | 'register'>('login');
   readonly busy = signal(false);
   readonly error = signal('');
+  readonly notice = signal('');
   readonly mfaRequired = signal(false);
   email = '';
   password = '';
@@ -123,6 +138,27 @@ export class Login {
     ev.preventDefault();
     this.mode.update((m) => (m === 'login' ? 'register' : 'login'));
     this.error.set('');
+    this.notice.set('');
+  }
+
+  async forgotPassword(ev: Event): Promise<void> {
+    ev.preventDefault();
+    this.error.set('');
+    if (!this.email.trim()) {
+      this.error.set('Enter your email address first, then click again.');
+      return;
+    }
+    this.busy.set(true);
+    try {
+      await this.api.forgotPassword(this.email.trim());
+      // Deliberately says the same thing whether or not the account exists —
+      // the API does too, so this page can't be used to probe for accounts.
+      this.notice.set('If that address has an account, a reset link is on its way.');
+    } catch {
+      this.notice.set('If that address has an account, a reset link is on its way.');
+    } finally {
+      this.busy.set(false);
+    }
     this.mfaRequired.set(false);
   }
 

@@ -144,6 +144,27 @@ Restoring an older schema than the running code expects is fine — migrations
 are applied at startup, so the restored database is brought forward
 automatically.
 
+## Email (password reset)
+
+Password reset needs somewhere to send mail. Add to `/etc/lesarin/lesarin.env`:
+
+```
+LESARIN_BASE_URL=https://lesarin.hoj.fo     # used to build the reset link
+LESARIN_SMTP_HOST=smtp.example.fo
+LESARIN_SMTP_PORT=587
+LESARIN_SMTP_USER=no-reply@lesarin.hoj.fo
+LESARIN_SMTP_PASSWORD=...
+LESARIN_MAIL_FROM=no-reply@lesarin.hoj.fo
+```
+
+Without `LESARIN_SMTP_HOST` nothing is sent — the message is written to the log
+at WARNING instead, link and all. That keeps reset working on a laptop, but on
+the server it means customers can't recover their passwords, so check for it:
+
+```bash
+sudo journalctl -u lesarin | grep 'SMTP is not configured'
+```
+
 ## Staff accounts
 
 The studio edits shared vendor knowledge, so it's staff-only — and there is
