@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-from datetime import datetime, timezone
-from typing import List
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,6 +40,16 @@ def _vocab_k() -> int:
     fragility that bites in tests.
     """
     return int(os.environ.get("CENTRAL_VOCAB_K", 5))
+
+
+def _retention_days() -> Optional[int]:
+    """How long an observation is kept while still below the k threshold
+    (docs/brain-sync.md, open question 4). ``None`` (the env var unset) keeps
+    the old unbounded behavior; once a pairing is ``revealed`` it is kept
+    forever regardless — this only prunes hashes/counts nobody ever
+    corroborated."""
+    raw = os.environ.get("CENTRAL_OBSERVATION_RETENTION_DAYS")
+    return int(raw) if raw else None
 
 
 def _withdraw_thresholds() -> tuple[int, int, float]:
@@ -267,3 +277,42 @@ def build_pull_bundle(session: Session) -> dict:
         "bundle_version": BUNDLE_VERSION, "templates": templates, "vocabulary": vocabulary,
         "output_name_presets": output_name_presets,
     }
+
+
+def purge_stale_observations(session: Session, retention_days: Optional[int] = None) -> dict:
+    """Delete label/output-name observations that never crossed the k
+    threshold and are older than the retention window (docs/brain-sync.md,
+    open question 4: "forever is rarely the right answer to write into a
+    privacy policy"). A ``revealed`` row is never touched — once a pairing is
+    a published convention it isn't "below k" evidence anymore.
+
+    ``retention_days=None`` (the default) reads ``CENTRAL_OBSERVATION_RETENTION_DAYS``;
+    pass it explicitly to purge on demand regardless of that setting, e.g.
+    from an admin action. With no retention window configured and none
+    passed, this is a no-op — the old unbounded-retention behavior.
+    """
+    days = _retention_days() if retention_days is None else retention_days
+    if not days:
+        return {"labels_purged": 0, "presets_purged": 0}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    labels_purged = 0
+    for row in session.scalars(
+        select(LabelObservation).where(
+            LabelObservation.revealed.is_(False), LabelObservation.first_seen_at < cutoff
+        )
+    ):
+        session.delete(row)
+        labels_purged += 1
+
+    presets_purged = 0
+    for row in session.scalars(
+        select(OutputNamePreset).where(
+            OutputNamePreset.revealed.is_(False), OutputNamePreset.first_seen_at < cutoff
+        )
+    ):
+        session.delete(row)
+        presets_purged += 1
+
+    session.commit()
+    return {"labels_purged": labels_purged, "presets_purged": presets_purged}

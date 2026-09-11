@@ -359,3 +359,52 @@ def test_different_output_names_for_the_same_field_are_counted_separately(client
         headers={"Authorization": f"Bearer {s2.signed_jwt()}"},
     )
     assert r2.json()["presets_revealed"] == 0  # two different names, one site behind each so far
+
+
+# --- Retention: below-threshold observations can be purged after a window ----
+
+def test_purge_only_removes_old_unrevealed_observations(client, admin_headers, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from central.db import SessionLocal
+    from central.models import LabelObservation, OutputNamePreset
+
+    s1 = _new_site_identity(tmp_path, "s1")
+    s2 = _new_site_identity(tmp_path, "s2")
+    _enroll_and_activate(client, admin_headers, s1, "s1")
+    _enroll_and_activate(client, admin_headers, s2, "s2")
+
+    # A revealed pairing (two sites, k=2)...
+    client.post("/sync/push", json=_bundle(), headers={"Authorization": f"Bearer {s1.signed_jwt()}"})
+    client.post("/sync/push", json=_bundle(), headers={"Authorization": f"Bearer {s2.signed_jwt()}"})
+    # ...and a still-pending one from a single site.
+    client.post(
+        "/sync/push", json=_bundle_with_output_name(output_name="only_one_site"),
+        headers={"Authorization": f"Bearer {s1.signed_jwt()}"},
+    )
+
+    old = datetime.now(timezone.utc) - timedelta(days=200)
+    with SessionLocal() as session:
+        for row in session.query(LabelObservation).all():
+            row.first_seen_at = old
+        for row in session.query(OutputNamePreset).all():
+            row.first_seen_at = old
+        session.commit()
+
+    result = client.post(
+        "/admin/purge-stale-observations", headers=admin_headers, json={"days": 90}
+    )
+    assert result.status_code == 200
+    body = result.json()
+    assert body["labels_purged"] == 0  # the only label observation is already revealed
+    assert body["presets_purged"] == 1  # the pending, never-corroborated one
+
+    presets = client.get("/admin/output-name-presets", headers=admin_headers).json()
+    assert not any(p["name"] is None and p["sites"] == 1 for p in presets)
+    vocab = client.get("/admin/vocabulary", headers=admin_headers).json()
+    assert any(v["revealed"] for v in vocab)  # untouched
+
+
+def test_purge_is_a_no_op_without_a_configured_retention_window(client, admin_headers):
+    result = client.post("/admin/purge-stale-observations", headers=admin_headers, json={})
+    assert result.json() == {"labels_purged": 0, "presets_purged": 0}

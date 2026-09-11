@@ -317,6 +317,25 @@ def list_vocabulary(
     ]
 
 
+class PurgeOut(BaseModel):
+    labels_purged: int
+    presets_purged: int
+
+
+@app.post("/admin/purge-stale-observations", response_model=PurgeOut)
+def purge_stale_observations(
+    days: Optional[int] = Body(None, embed=True),
+    admin: Admin = Depends(admin_auth.current_admin),
+    session: Session = Depends(get_session),
+) -> PurgeOut:
+    """Delete below-threshold observations older than the retention window
+    (docs/brain-sync.md, open question 4). ``days`` overrides
+    ``CENTRAL_OBSERVATION_RETENTION_DAYS`` for this call; omit it to use that
+    setting (a no-op if it's unset). Revealed pairings are never purged."""
+    result = central_sync.purge_stale_observations(session, retention_days=days)
+    return PurgeOut(**result)
+
+
 @app.get("/admin/output-name-presets", response_model=List[OutputNamePresetOut])
 def list_output_name_presets(
     admin: Admin = Depends(admin_auth.current_admin), session: Session = Depends(get_session)
