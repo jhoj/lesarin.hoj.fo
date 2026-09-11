@@ -41,6 +41,13 @@ class OutputField(Base):
     # VendorNumber ← ["Vtal", "V-Tal"]. Used to auto-locate the field on a
     # never-seen vendor. Applies across all vendors (a vendor's own mapping wins).
     aliases: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    # Output-name presets pulled from the central brain (docs/brain-sync.md "A
+    # third kind: what customers do with the data") — names other customers'
+    # accounting systems expect for this field, e.g. "Bilagsnr" for
+    # InvoiceNo. Unlike ``aliases`` (what a *label on the invoice* looks
+    # like), these are what a *customer renamed the output field to* —
+    # suggestions for the profile editor, never applied automatically.
+    preset_names: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
 
 class User(Base):
@@ -247,11 +254,39 @@ class FieldMapping(Base):
 
     vendor: Mapped["Vendor"] = relationship(back_populates="mappings")
 
+    # A person looked at this specific field and confirmed it — not just the
+    # template as a whole. Only confirmed mappings are eligible to cross the
+    # wire to the central brain (docs/brain-sync.md); an auto-learned guess
+    # stays a local convenience until someone in the studio saves it (studio
+    # writes go through a staff-only endpoint, which is what sets this True).
+    confirmed: Mapped[bool] = mapped_column(default=False)
+
     @property
     def bbox(self) -> Optional[List[float]]:
         if None in (self.x0, self.top, self.x1, self.bottom):
             return None
         return [self.x0, self.top, self.x1, self.bottom]
+
+
+class LabelObservation(Base):
+    """One document's harvest of label-shaped tokens (docs/brain-sync.md,
+    "Two kinds of knowledge" / Stage B): every label the heuristic recognised
+    on a read, regardless of whether it ended up in a confirmed mapping, plus
+    the layout fingerprint that read belongs to.
+
+    Queued locally until the next central push, then cleared — see
+    ``app/brain.py``. Never a value, only a label and its position.
+    """
+
+    __tablename__ = "label_observations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identifier: Mapped[Optional[str]] = mapped_column(String(64), default=None)  # V-tal, if known
+    layout_fingerprint: Mapped[str] = mapped_column(String(64))  # sha256 hex
+    label_set: Mapped[list] = mapped_column(JSON, default=list)
+    # [{"label": ..., "suggested_key": ..., "x_frac": ..., "y_frac": ...}, ...]
+    positions: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
 class ApiKey(Base):

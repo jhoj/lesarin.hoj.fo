@@ -31,6 +31,9 @@ uploads/
 data/*.db
 data/.lesarin-secret
 
+# Site identity — the private half never leaves the box (see site_agent/identity.py)
+data/site_key.pem
+
 # Frontend build / deps
 frontend/node_modules/
 frontend/dist/

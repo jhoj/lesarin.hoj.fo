@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field as PydField, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import auth, canonical, engine, exporters, mailer, rate_limit, repo, validation
+from . import auth, canonical, engine, exporters, fingerprint, mailer, rate_limit, repo, validation
 from .db import get_session
 from .db_models import ApiKey, ExportRecord, MfaCredential, OutputProfile, ProfileField, User
 from .exporters import CanonicalInvoice
@@ -533,7 +533,13 @@ def _apply_default_flag(session: Session, user: User, profile: OutputProfile, is
 # --- Export pipeline -------------------------------------------------------
 
 def _suggestions_to_mappings(suggestions) -> List[dict]:
-    """Turn first-pass heuristic field suggestions into vendor template mappings."""
+    """Turn first-pass heuristic field suggestions into vendor template mappings.
+
+    Unconfirmed (docs/brain-sync.md): nobody looked at these, so they stay a
+    local convenience — useful for reading this vendor's invoices here, but
+    never eligible to cross the wire to the central brain (app/brain.py only
+    ever ships ``FieldMapping.confirmed`` rows).
+    """
     mappings: List[dict] = []
     for s in suggestions:
         if s.read_labels:
@@ -543,6 +549,7 @@ def _suggestions_to_mappings(suggestions) -> List[dict]:
                 "label": s.read_labels[0],
                 "relation": "right",
                 "value_type": s.value_type,
+                "confirmed": False,
             })
         elif s.bbox and s.page:
             mappings.append({
@@ -551,6 +558,7 @@ def _suggestions_to_mappings(suggestions) -> List[dict]:
                 "value_type": s.value_type,
                 "page": s.page,
                 "bbox": s.bbox,
+                "confirmed": False,
             })
     return mappings
 
@@ -569,12 +577,27 @@ def build_canonical(
     values = ext.values()
     values.setdefault("Currency", None)  # keep the key present even when unknown
 
-    # Auto-learn: store a central template for a vendor we could identify but
-    # hadn't seen before, so the next customer's upload is an instant hit.
+    # Auto-learn: store a local template for a vendor we could identify but
+    # hadn't seen before, so the next upload here is an instant hit.
     if ext.vendor is None:
         _maybe_learn_vendor(session, values, ext.suggestions, learn_as_user)
 
+    # Harvest every label-shaped token this read found, regardless of vendor
+    # identification (docs/brain-sync.md Stage B) — this is what lets the
+    # shared vocabulary learn independent of any one vendor's template.
+    _harvest_labels(session, document, values.get("VendorNo"), ext.suggestions)
+
     return CanonicalInvoice(values=values, lines=ext.lines), ext
+
+
+def _harvest_labels(
+    session: Session, document: loader.Document, identifier: Optional[str], suggestions
+) -> None:
+    fp = fingerprint.build_fingerprint(document, suggestions, identifier)
+    if fp["positions"]:
+        repo.add_label_observation(
+            session, fp["identifier"], fp["layout_fingerprint"], fp["label_set"], fp["positions"]
+        )
 
 
 def _maybe_learn_vendor(session: Session, values: dict, suggestions, learn_as_user) -> None:
@@ -657,6 +680,14 @@ async def export_invoice(
     # Machine-readable read quality, so automation callers can branch without
     # parsing the body: how the read was made and whether the numbers held up.
     check = validation.validate(extraction.values(), extraction.lines)
+    # Has this exact invoice already been exported by this account? Checked
+    # against export_records BEFORE _record_export below writes this one.
+    dup = validation.duplicate.check(session, user.id, extraction.values())
+    likelihood = validation.invoice_likelihood.score(document, extraction.values(), bool(extraction.lines))
+    einvoice_check = (
+        validation.einvoice.validate_ubl(rendered.body.encode("utf-8"))
+        if out_fmt in ("ubl", "oioubl") else None
+    )
     # Measured against what the customer actually asked for, not against what
     # the engine happened to attempt — a field the reader never even tried for
     # is still an empty value in their file, and they need to know about it.
@@ -676,7 +707,12 @@ async def export_invoice(
         "X-Lesarin-Located": f"{len(requested) - len(missing)}/{len(requested)}",
         "X-Lesarin-Missing": ",".join(missing),
         "X-Lesarin-Vendor": extraction.vendor.name if extraction.vendor else "",
+        "X-Lesarin-Likelihood": str(likelihood["score"]),
     }
+    if dup.get("checked"):
+        headers["X-Lesarin-Duplicate"] = "true" if dup["duplicate"] else "false"
+    if einvoice_check is not None:
+        headers["X-Lesarin-Einvoice-Valid"] = "true" if einvoice_check["valid"] else "false"
     # The line to reach for when a customer asks why an export looked wrong:
     # which vendor was recognised, whether a template or the heuristics did the
     # reading, how much was found, and whether the numbers held together.

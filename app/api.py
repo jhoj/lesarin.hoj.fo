@@ -79,6 +79,7 @@ def _vendor_out(v: Vendor) -> VendorOut:
                 value_type=m.value_type,
                 page=m.page,
                 bbox=m.bbox,
+                confirmed=m.confirmed,
             )
             for m in v.mappings
         ],
@@ -253,7 +254,10 @@ def create_vendor(
         name=body.name,
         identifier_kind=body.identifier_kind,
         match_keywords=body.match_keywords,
-        mappings=[m.model_dump() for m in body.mappings],
+        # Reaching this staff-only endpoint at all is the confirmation
+        # (docs/brain-sync.md) — a client can't set this itself (MappingIn
+        # defaults it False), so it's forced True here, not trusted from the body.
+        mappings=[{**m.model_dump(), "confirmed": True} for m in body.mappings],
         created_by_user_id=staff.id,
     )
     return _vendor_out(v)
@@ -272,7 +276,7 @@ def update_vendor(
         identifier=body.identifier,
         name=body.name,
         match_keywords=body.match_keywords,
-        mappings=[m.model_dump() for m in body.mappings],
+        mappings=[{**m.model_dump(), "confirmed": True} for m in body.mappings],
         changed_by_user_id=staff.id,
     )
     if v is None:

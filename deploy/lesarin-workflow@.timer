@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Lesarin invoice workflow (%i)
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+Unit=lesarin-workflow@%i.service
+
+[Install]
+WantedBy=timers.target

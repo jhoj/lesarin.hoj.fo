@@ -423,6 +423,10 @@ matching once a supplier redesigns their form. What's left:
 3. **k for the vocabulary and the output-name presets.** Five is written above
    as a starting point, chosen for caution rather than from evidence. Stage D
    exists to replace it with a real number.
-4. **How long are observations kept below k?** They are hashes and counts, so
-   the cost is small, but "forever" is rarely the right answer to write into a
-   privacy policy.
+4. ~~**How long are observations kept below k?**~~ Settled: `central.sync.purge_stale_observations`
+   deletes label/output-name observations older than `CENTRAL_OBSERVATION_RETENTION_DAYS`
+   days while still below k (unset = unbounded, the old behavior), via
+   `POST /admin/purge-stale-observations`. A revealed pairing is never purged —
+   only hashes and counts nobody ever corroborated. No scheduler wires this up
+   automatically yet; an admin (or a cron hitting the endpoint) decides the
+   cadence.
