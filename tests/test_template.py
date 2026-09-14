@@ -72,6 +72,72 @@ def test_region_strategy_tolerates_a_partial_box(document):
     assert by_region.source == "template-region"
 
 
+def test_region_over_an_image_falls_back_to_ocr_crop(document, sample_invoice_pdf, monkeypatch):
+    # An empty region — no real words fall inside it, e.g. a box drawn over a
+    # rasterised logo/letterhead. With pdf_bytes given, this must retry via
+    # loader.ocr_crop rather than coming back empty.
+    calls = []
+
+    def fake_ocr_crop(pdf_bytes, page, width, height, bbox):
+        calls.append((page, bbox))
+        return "9865 - 100.355.5"
+
+    monkeypatch.setattr(template.loader, "ocr_crop", fake_ocr_crop)
+
+    field = template.apply_template(
+        document,
+        TemplateIn(fields=[MappingIn(output="AccountNo", strategy="region", page=1, bbox=[1, 1, 2, 2])]),
+        pdf_bytes=sample_invoice_pdf,
+    )[0]
+    assert field.value == "9865 - 100.355.5"
+    assert field.source == "template-region"
+    assert calls == [(1, [1, 1, 2, 2])]
+
+
+def test_region_without_pdf_bytes_stays_empty_over_blank_space(document):
+    # Same empty box, but no pdf_bytes — must not attempt OCR, and must not
+    # crash; behaviour is unchanged from before the OCR fallback existed.
+    field = _read(document, MappingIn(output="AccountNo", strategy="region", page=1, bbox=[1, 1, 2, 2]))
+    assert field.value is None
+    assert field.source == "none"
+
+
+def test_region_with_real_text_never_calls_ocr(document, sample_invoice_pdf, monkeypatch):
+    def fail_if_called(*a, **kw):
+        raise AssertionError("ocr_crop should not run when real words were found")
+
+    monkeypatch.setattr(template.loader, "ocr_crop", fail_if_called)
+
+    located = _read(document, MappingIn(output="InvoiceNumber", strategy="label", label="Fakturanr"))
+    field = template.apply_template(
+        document,
+        TemplateIn(fields=[
+            MappingIn(output="InvoiceNumber", strategy="region", page=located.page, bbox=located.bbox)
+        ]),
+        pdf_bytes=sample_invoice_pdf,
+    )[0]
+    assert field.value == "2026-0014"
+
+
+def test_region_ocr_fallback_skipped_on_an_already_ocrd_page(monkeypatch):
+    # A page that went through whole-page OCR already searched OCR-derived
+    # words for the box above and found nothing — retrying is redundant work.
+    scanned_page = loader.PageContent(1, 595.0, 842.0, [], [], ocr_used=True)
+    doc = loader.Document(pages=[scanned_page])
+
+    def fail_if_called(*a, **kw):
+        raise AssertionError("ocr_crop should not run on an already-OCR'd page")
+
+    monkeypatch.setattr(template.loader, "ocr_crop", fail_if_called)
+
+    field = template.apply_template(
+        doc,
+        TemplateIn(fields=[MappingIn(output="AccountNo", strategy="region", page=1, bbox=[1, 1, 2, 2])]),
+        pdf_bytes=b"irrelevant",
+    )[0]
+    assert field.value is None
+
+
 def test_short_label_prefers_the_line_it_leads(document, sample_invoice_pdf):
     # A short label that also appears as the trailing word of a longer phrase
     # must read the line it *leads*, not the first line that merely contains it.

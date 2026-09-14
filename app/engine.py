@@ -80,8 +80,15 @@ def _template_of(vendor: Vendor) -> TemplateIn:
     ])
 
 
-def extract(session: Session, document: loader.Document) -> CanonicalExtraction:
-    """Detect the vendor, apply its template, then fill gaps from heuristics."""
+def extract(
+    session: Session, document: loader.Document, pdf_bytes: Optional[bytes] = None
+) -> CanonicalExtraction:
+    """Detect the vendor, apply its template, then fill gaps from heuristics.
+
+    ``pdf_bytes``, when given, lets a region mapping over a rasterised area
+    (a logo/letterhead with no real text — see ``app/extraction/template.py``)
+    fall back to OCR-ing just that crop instead of coming back empty.
+    """
     text = templater.document_text(document)
     vendor = repo.detect_vendor(session, text)
     matched = bool(vendor is not None and vendor.mappings)
@@ -92,7 +99,7 @@ def extract(session: Session, document: loader.Document) -> CanonicalExtraction:
     if matched:
         template = _template_of(vendor)
         applied = [m.model_dump() for m in template.fields]
-        for rf in templater.apply_template(document, template):
+        for rf in templater.apply_template(document, template, pdf_bytes=pdf_bytes):
             fields[rf.output] = FieldResult(
                 canonical=rf.output,
                 value=rf.value,

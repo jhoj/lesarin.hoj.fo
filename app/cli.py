@@ -113,7 +113,7 @@ def run(input_path: str, config: dict, fmt_override: Optional[str] = None,
                  "input": input_path}, STATUS_EXIT["failed"])
 
     with SessionLocal() as session:
-        extraction = engine.extract(session, document)
+        extraction = engine.extract(session, document, data)
 
     expected = _expected_fields(config, extraction)
     missing = [k for k in expected if not extraction.fields.get(k, None) or not extraction.fields[k].found]

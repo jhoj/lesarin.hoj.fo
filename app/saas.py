@@ -564,7 +564,10 @@ def _suggestions_to_mappings(suggestions) -> List[dict]:
 
 
 def build_canonical(
-    session: Session, document: loader.Document, learn_as_user: Optional[int] = None
+    session: Session,
+    document: loader.Document,
+    learn_as_user: Optional[int] = None,
+    pdf_bytes: Optional[bytes] = None,
 ) -> tuple[CanonicalInvoice, "engine.CanonicalExtraction"]:
     """Project a parsed document onto the canonical vocabulary, then — if the
     vendor was previously unknown but identifiable — learn it centrally for next
@@ -573,7 +576,7 @@ def build_canonical(
     Returns the format-neutral invoice plus the raw extraction (so callers can
     report how the read went: template vs heuristic, per-field confidence).
     """
-    ext = engine.extract(session, document)
+    ext = engine.extract(session, document, pdf_bytes)
     values = ext.values()
     values.setdefault("Currency", None)  # keep the key present even when unknown
 
@@ -664,7 +667,12 @@ async def export_invoice(
         logger.warning("export user=%s file=%r could not read PDF: %s", user.id, file.filename, exc)
         raise HTTPException(422, f"Could not read PDF: {exc}") from exc
 
-    invoice, extraction = build_canonical(session, document, learn_as_user=user.id)
+    # A region mapping with no real text under it (a value baked into a
+    # logo/letterhead) falls back to OCR-ing that crop — CPU-bound like the
+    # parse above, so it stays off the event loop too.
+    invoice, extraction = await run_in_threadpool(
+        build_canonical, session, document, learn_as_user=user.id, pdf_bytes=data
+    )
 
     profile = _resolve_profile(session, user, profile_id)
     profile_fields = (

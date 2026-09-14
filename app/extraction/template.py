@@ -20,6 +20,7 @@ from typing import List, Optional, Tuple
 
 from . import dates
 from . import fields as heuristic
+from . import loader
 from .fields import group_lines, Line, _bbox_of, _match_label_on_line, _value_below, _value_to_right
 from .loader import Document, Word
 from ..models import Field, MappingIn, ReadField, Suggestion, TemplateIn
@@ -139,23 +140,41 @@ def _words_in_box(document: Document, page: int, bbox: List[float]) -> List[Word
     return []
 
 
-def _read_by_region(document: Document, mapping: MappingIn) -> Field:
+def _read_by_region(document: Document, mapping: MappingIn, pdf_bytes: Optional[bytes] = None) -> Field:
     if not mapping.bbox or mapping.page is None:
         return Field.empty()
     words = _words_in_box(document, mapping.page, mapping.bbox)
-    if not words:
+    if words:
+        raw = " ".join(w.text for w in words)
+        coerced, orig = _coerce(raw, mapping.value_type)
+        if coerced is None:
+            return Field.empty()
+        word_conf = min((w.confidence for w in words), default=1.0)
+        return Field(
+            value=coerced,
+            raw=orig,
+            page=mapping.page,
+            bbox=_bbox_of(words),
+            confidence=round(0.85 * (word_conf if word_conf > 0 else 1.0), 3),
+            source_label=None,
+        )
+
+    # No real text in the box at all — it may be sitting over a rasterised
+    # logo/letterhead. A page that was already OCR'd already tried matching
+    # against OCR-derived words above, so only worth retrying on a digital
+    # page (skip the redundant OCR pass otherwise).
+    page = next((p for p in document.pages if p.page_number == mapping.page), None)
+    if pdf_bytes is None or page is None or page.ocr_used:
         return Field.empty()
-    raw = " ".join(w.text for w in words)
-    coerced, orig = _coerce(raw, mapping.value_type)
+    text = loader.ocr_crop(pdf_bytes, mapping.page, page.width, page.height, mapping.bbox)
+    if not text:
+        return Field.empty()
+    coerced, orig = _coerce(text, mapping.value_type)
     if coerced is None:
         return Field.empty()
-    word_conf = min((w.confidence for w in words), default=1.0)
     return Field(
-        value=coerced,
-        raw=orig,
-        page=mapping.page,
-        bbox=_bbox_of(words),
-        confidence=round(0.85 * (word_conf if word_conf > 0 else 1.0), 3),
+        value=coerced, raw=orig, page=mapping.page, bbox=mapping.bbox,
+        confidence=0.5,  # OCR on a small, uncontrolled crop — trust it less than real text
         source_label=None,
     )
 
@@ -165,9 +184,10 @@ def read_mapping(
     pages_lines: List[Tuple[int, List[Line]]],
     mapping: MappingIn,
     extra_labels: Optional[List[str]] = None,
+    pdf_bytes: Optional[bytes] = None,
 ) -> ReadField:
     if mapping.strategy == "region":
-        field = _read_by_region(document, mapping)
+        field = _read_by_region(document, mapping, pdf_bytes)
         source = "template-region" if field.found else "none"
     else:
         field = _read_by_label(pages_lines, mapping, extra_labels)
@@ -176,16 +196,21 @@ def read_mapping(
 
 
 def apply_template(
-    document: Document, template: TemplateIn, aliases: Optional[dict] = None
+    document: Document,
+    template: TemplateIn,
+    aliases: Optional[dict] = None,
+    pdf_bytes: Optional[bytes] = None,
 ) -> List[ReadField]:
     """Apply each mapping. ``aliases`` maps an output key to extra read-labels
-    (synonyms) to try in addition to the mapping's own label."""
+    (synonyms) to try in addition to the mapping's own label. ``pdf_bytes``,
+    when given, lets a region mapping over a rasterised area (no real text)
+    fall back to OCR-ing just that crop — see ``_read_by_region``."""
     aliases = aliases or {}
     pages_lines: List[Tuple[int, List[Line]]] = [
         (p.page_number, group_lines(p.words)) for p in document.pages
     ]
     return [
-        read_mapping(document, pages_lines, m, aliases.get(m.output))
+        read_mapping(document, pages_lines, m, aliases.get(m.output), pdf_bytes)
         for m in template.fields
     ]
 

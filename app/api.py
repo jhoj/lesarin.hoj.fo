@@ -150,7 +150,7 @@ def read_document(
     # Augment each field's label search with its taught read-labels (aliases), so
     # e.g. an output field named "Vtal" still auto-locates a "V-tal" label.
     aliases = {f.key: list(f.aliases or []) for f in repo.list_output_fields(session)}
-    located = templater.apply_template(document, template, aliases)
+    located = templater.apply_template(document, template, aliases, entry.pdf_bytes)
     suggestions = templater.suggestions(document, _CONFIG)
     lines = line_extractor.extract_line_items(document, _CONFIG)
     found = sum(1 for f in located if f.found)
@@ -319,7 +319,7 @@ async def extract_with_template(
                 for m in vendor.mappings
             ]
         )
-        located = templater.apply_template(document, tmpl)
+        located = templater.apply_template(document, tmpl, pdf_bytes=data)
 
     lines = line_extractor.extract_line_items(document, _CONFIG)
     found = sum(1 for f in located if f.found)
