@@ -73,10 +73,10 @@ export class Studio implements OnInit {
   // confirmation (edit export key / read-labels) before becoming output fields.
   readonly suggestRows = signal<SuggestRow[]>([]);
 
-  readonly fileUrl = computed(() => {
-    const info = this.docInfo();
-    return info ? this.api.fileUrl(info.doc_id) : null;
-  });
+  // Set directly from the uploaded File in upload() — no re-fetch, and no
+  // dependency on the (staff-only) GET .../file endpoint that pdf.js's own
+  // URL loader can't authenticate against.
+  readonly pdfBytes = signal<ArrayBuffer | null>(null);
 
   // Nothing but the dropzone is usable until a PDF is loaded.
   readonly hasDoc = computed(() => !!this.docInfo());
@@ -170,8 +170,9 @@ export class Studio implements OnInit {
     this.busy.set(true);
     this.status.set(`Reading ${file.name}…`);
     try {
-      const info = await this.api.uploadDocument(file);
+      const [info, bytes] = await Promise.all([this.api.uploadDocument(file), file.arrayBuffer()]);
       this.docInfo.set(info);
+      this.pdfBytes.set(bytes);
       this.readFields.set([]);
       this.suggestions.set([]);
       this.lines.set([]);
