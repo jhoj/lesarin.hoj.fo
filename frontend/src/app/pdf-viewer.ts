@@ -47,7 +47,12 @@ interface DragState {
   styleUrl: './pdf-viewer.css',
 })
 export class PdfViewer {
-  readonly pdfUrl = input<string | null>(null);
+  // Raw bytes, not a URL: GET /api/documents/{id}/file requires a staff
+  // session, and pdf.js's own URL-based loader bypasses Angular's HttpClient
+  // (and so the auth interceptor) entirely, which silently 401s. The caller
+  // already has the bytes — from the upload File object, or fetched via
+  // Api (authenticated) — so pdf.js is just handed them directly.
+  readonly pdfBytes = input<ArrayBuffer | null>(null);
   readonly boxes = input<ViewBox[]>([]);
   readonly selectedId = input<string | null>(null);
   // When armed, dragging on empty page area draws a new box for the active field.
@@ -75,9 +80,9 @@ export class PdfViewer {
 
   constructor() {
     effect(() => {
-      const url = this.pdfUrl();
+      const bytes = this.pdfBytes();
       untracked(() => {
-        if (url) this.loadDoc(url);
+        if (bytes) this.loadDoc(bytes);
       });
     });
     effect(() => {
@@ -91,10 +96,13 @@ export class PdfViewer {
     });
   }
 
-  private async loadDoc(url: string): Promise<void> {
+  private async loadDoc(bytes: ArrayBuffer): Promise<void> {
     this.dragging.set(null);
     try {
-      const task = pdfjsLib.getDocument(url);
+      // pdf.js can detach/transfer the buffer it's handed, so give it its own
+      // copy — the caller's ArrayBuffer (e.g. straight off the upload File)
+      // may still be read elsewhere.
+      const task = pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) });
       this.pdfDoc = await task.promise;
       this.totalPages.set(this.pdfDoc.numPages);
       this.page.set(1);

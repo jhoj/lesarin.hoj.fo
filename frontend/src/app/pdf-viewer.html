@@ -1,4 +1,4 @@
-@if (pdfUrl()) {
+@if (pdfBytes()) {
   <div class="pdf-toolbar">
     <button type="button" (click)="prev()" [disabled]="page() <= 1">‹ Prev</button>
     <span class="pageno">Page {{ page() }} / {{ totalPages() }}</span>

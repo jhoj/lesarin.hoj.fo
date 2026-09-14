@@ -67,7 +67,7 @@
   <section class="col center">
     @if (hasDoc()) {
       <app-pdf-viewer
-        [pdfUrl]="fileUrl()"
+        [pdfBytes]="pdfBytes()"
         [boxes]="boxes()"
         [selectedId]="selectedOutput()"
         [drawArmed]="activeFieldNeedsBox()"

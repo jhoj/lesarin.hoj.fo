@@ -62,10 +62,6 @@ export class Api {
     return firstValueFrom(this.http.post<DocumentInfo>(`${BASE}/documents`, fd));
   }
 
-  fileUrl(docId: string): string {
-    return `${BASE}/documents/${docId}/file`;
-  }
-
   suggestFields(docId: string): Promise<{ suggestions: FieldSuggestion[] }> {
     return firstValueFrom(
       this.http.get<{ suggestions: FieldSuggestion[] }>(`${BASE}/documents/${docId}/suggest-fields`),
