@@ -248,6 +248,59 @@ def _ocr_words(
     return words
 
 
+def ocr_crop(
+    pdf_bytes: bytes, page_number: int, page_width: float, page_height: float, bbox: List[float]
+) -> Optional[str]:
+    """OCR just one region of an otherwise-digital page.
+
+    A hand-drawn region box sometimes lands on a rasterised area — a logo or
+    letterhead with the bank account number baked into the image — where
+    normal word extraction finds nothing because there's no real text there
+    at all. This is the fallback: render the page, crop to the box, and read
+    whatever's in the crop. Returns ``None`` if OCR isn't available/fails or
+    finds nothing, so callers can fall back to "not found" as before.
+    """
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError:
+        return None
+
+    _configure_tesseract(pytesseract)
+    poppler_path = os.environ.get("POPPLER_PATH") or None
+    try:
+        images = convert_from_bytes(
+            pdf_bytes, dpi=_OCR_DPI, first_page=page_number, last_page=page_number,
+            poppler_path=poppler_path,
+        )
+    except Exception:
+        return None
+    if not images:
+        return None
+    image = images[0]
+
+    sx = image.width / page_width if page_width else _OCR_DPI / 72.0
+    sy = image.height / page_height if page_height else _OCR_DPI / 72.0
+    x0, top, x1, bottom = bbox
+    pad = 3  # a tight box shouldn't clip character edges/descenders
+    left = max(0, int(x0 * sx) - pad)
+    upper = max(0, int(top * sy) - pad)
+    right = min(image.width, int(x1 * sx) + pad)
+    lower = min(image.height, int(bottom * sy) + pad)
+    if right <= left or lower <= upper:
+        return None
+
+    lang = ocr_language()
+    kwargs = {"config": "--psm 6"}  # a small crop: assume one uniform block of text
+    if lang:
+        kwargs["lang"] = lang
+    try:
+        text = pytesseract.image_to_string(image.crop((left, upper, right, lower)), **kwargs)
+    except Exception:
+        return None
+    return text.strip() or None
+
+
 def _configure_tesseract(pytesseract) -> None:
     """Point pytesseract at the Tesseract binary via TESSERACT_CMD.
 
