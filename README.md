@@ -380,6 +380,51 @@ otherwise. To onboard a customer's expected fields (with their synonyms):
 python -m app.sync import-fields customer-fields.yaml
 ```
 
+## Where the data has to go: discovering a target's fields
+
+Asking a customer to type out the fields they need is the slowest part of
+onboarding, and they usually don't know the answer — their *target* system does.
+So instead of typing, point at the target.
+
+Many applications serve a machine-readable contract behind their login without
+advertising it, so the cheapest thing to try is simply asking for it. From the
+customer's own machine, with a logged-in session:
+
+```bash
+export LESARIN_TARGET_COOKIE='session=...'      # keeps it out of shell history
+python -m site_agent.schema_probe https://app.example --out target-schema.json
+```
+
+It probes the well-known locations for four contract formats — **OpenAPI 3**,
+**Swagger 2**, **OData** (`/$metadata`) and **GraphQL** introspection — parses
+whatever it finds, and emits a flat field list: dotted paths, types, required
+flags, enums and lengths, with nested objects as `approver.email` and repeating
+groups as `lines[].amount`.
+
+A document usually describes dozens of operations, so candidates are ranked by
+how invoice-shaped they look — both what the operation is *called* (in Faroese,
+Danish and English) and what its body *carries*, because a generic
+`POST /documents` whose payload has an `invoiceNumber` is the endpoint we want
+and its name says so nowhere. The winner lands in `schema`, the rest in
+`other_candidates` for an operator to pick from.
+
+| Exit | `status` | What it means |
+| --- | --- | --- |
+| `0` | `found` | a contract was parsed — this is the target's field list |
+| `2` | `not_found` | the target answered but publishes no contract; fall back to observing the app's own requests while a record is entered by hand |
+| `1` | `unauthorized` / `unreachable` | credentials rejected, or no response at all |
+
+This lives in `site_agent/` deliberately. Reaching the target needs the
+customer's credentials, and those stay on the customer's machine — **the schema
+is what travels, never the cookie that found it.** The report names the auth
+headers that were sent but never their values, so it is safe to paste into a
+bug thread. Every probe is a read, a response is abandoned past 8 MB, and a
+redirect to another host is refused rather than followed, since following it
+would replay the session cookie at an origin the customer never named.
+
+> Only ever run this against a system the customer is authorised to use, with
+> their own credentials — and check the target's terms first.
+
 ## Deploy
 
 A GitHub Actions pipeline ships to the VPS on every merge to `main`: GitHub's
